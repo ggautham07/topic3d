@@ -1,144 +1,32 @@
+#!/usr/bin/env python
 """
 Data types for topic decomposition (:mod:`topic3d.datatypes`)
 =====================================================
 
-.. authors:: Gautham Ganesh, Jean-Bernard Fiche, Marcelo Nollmann
+.. authors:: gsgautham98, jbfiche, marcnol
 
-Function reference
-------------------
+Class reference
+-----------------
 """
 
 
+# =============================================================================
+# IMPORTS
+# =============================================================================
+
 from numbers import Number
-import h5py
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import squareform, pdist
 from scipy.linalg import issymmetric
 import warnings
-import computation as cmp
 import visualization
 
 
-def symmetric(matrix:np.ndarray) -> np.ndarray:
-    """ Build a symmetric version of the input matrix.
-    If the lower triangle matrix is filled with zeros, the upper triangle matrix is copied to the lower whilst retaining the original diagonal elements.
-    Otherwise, it adds the matrix to its transpose and divides the new matrix by two.
-    
-    Parameters
-    ----------
-    matrix : two-dimensional square array
 
-    Returns
-    ----------
-    a symmetric matrix
-    """
-
-    assert matrix.ndim == 2
-
-    if issymmetric(matrix):
-        return matrix
-    return matrix + matrix.T - np.diag(np.diag(matrix)) if (np.tril(matrix, k=-1) == 0).all() else (matrix + matrix.T) / 2
-
-########################
-
-
-def compute_cov_matrix(matrix:np.ndarray) -> np.ndarray:
-    """ Compute the covariance matrix from a symmetric mean-squared distance matrix assuming a Gaussian distribution
-    
-    Parameters
-    ----------
-    matrix : two-dimensional square symmetric array
-
-    Returns
-    ----------
-    cov : covariance matrix computed using Daniel Jost's method
-    """
-
-    assert matrix.ndim == 2
-    assert issymmetric(matrix)
-    N = matrix.shape[0]
-
-    cov = np.zeros((N-1, N-1))
-    np.fill_diagonal(cov, matrix[0,1:])
-    for i in range(N-1):
-        for j in range(i+1, N-1):
-            cov[i,j] = (cov[i,i] + cov[j,j] - matrix[i+1, j+1]) / 2
-    cov = symmetric(cov)
-    
-    return cov
-
-
-def normalize_minmax(arr:np.ndarray) -> np.ndarray:
-    """ Normalize the values of an array to the range of [0, 1] using Min-Max Normalization
-    
-    Parameters
-    ----------
-    arr : an array
-
-    Returns
-    ----------
-    arr_rescaled : rescaled input array
-    """
-
-    arr_min = np.min(arr)
-    arr_rescaled = (arr - arr_min) / (np.max(arr) - arr_min)
-    
-    return arr_rescaled
-
-
-def regularize_matrix(matrix:np.ndarray, hack=False) -> np.ndarray:
-    """ Regularize the given matrix to make it positive-definite, i.e., having no negative eigenvalues
-    
-    Parameters
-    ----------
-    matrix : two-dimensional square array\n
-    hack : if `True`, the lowest positive eigenvalue will be replaced by a small positive value
-
-    Returns
-    ----------
-    reg_matrix : regularised matrix
-    """
-
-    assert matrix.ndim == 2
-    N = matrix.shape[0]
-
-    eigenvals, eigenvecs = np.linalg.eig(matrix)
-    if np.all(eigenvals > 0) and hack:
-        eigenvals[np.argmin(eigenvals)] = 1e-06
-    else:
-        eigenvals[eigenvals < 0] = 1e-06
-    reg_matrix = eigenvecs @ np.diag(eigenvals) @ np.linalg.inv(eigenvecs)
-    
-    return reg_matrix
-
-
-########################
-
-def rescale_minmax(arr:np.ndarray, ref:np.ndarray) -> np.ndarray:
-
-    """
-    Rescale the values of an array `arr` to the range of another array `ref` using Min-Max Normalization
-    
-    Parameters
-    ----------
-    arr, ref : two arrays of the same shape
-
-    Returns
-    ----------
-    arr_rescaled : rescaled input array
-    """
-    
-    assert np.logical_not(np.isnan(arr).all())
-
-    ref = ref[np.logical_not(np.isnan(ref))]
-    new_min = np.min(ref)
-    new_max = np.max(ref)
-
-    arr_rescaled = (normalize_minmax(arr) * (new_max - new_min)) + new_min
-
-    return arr_rescaled
-
+# =============================================================================
+# CLASSES
+# =============================================================================
 
 
 class CoordsArrayStack(np.ndarray):
@@ -148,10 +36,19 @@ class CoordsArrayStack(np.ndarray):
     tracing experiments and coarse-grained polymer simulations
 
     Parameters
-    --------
+    -------
     a : array_like
         Array containing numbers whose mean is desired. If `a` is not an
         array, a conversion is attempted.
+
+    Methods
+    -------
+    compute_pwds(filename)
+        Read a table from a file
+        
+    compute_bc_efficiency(column, order='ascending')
+        Compute bc efficiencies
+    
 
     Returns
     -------
@@ -160,12 +57,12 @@ class CoordsArrayStack(np.ndarray):
         otherwise a reference to the output array is returned.
 
     See Also
-    --------
+    -------
     average : Weighted average
     std, var, nanmean, nanstd, nanvar
 
     Notes
-    --------
+    -------
     The arithmetic mean is the sum of the elements along the axis divided
     by the number of elements.
     """
@@ -212,7 +109,7 @@ class CoordsArrayStack(np.ndarray):
         return pwds
 
 
-    def compute_bc_effs(self) -> np.ndarray:
+    def compute_bc_efficiency(self) -> np.ndarray:
         """Compute barcode hybridization efficiency (percentage of barcode detection)"""
 
         bc_effs = np.zeros((self.num_bc,))
@@ -221,15 +118,33 @@ class CoordsArrayStack(np.ndarray):
             bc_effs[i] = np.around(num_bc_found * 100 / self.num_items, decimals=1)
 
         return bc_effs
+    
+
+    def filter(self, min_efficiency=0.1):
+        """ Filter the dataset by minimum number of barcodes present in the trace
+
+        Parameters
+        -------
+        min_efficiency : minimum barcode detection efficiency
+
+        Returns
+        -------
+        filtered dataset
+        """
+
+        num_bc_detected_by_item = np.sum(~np.isnan(self).any(axis=-1), axis=1)
+        idxs = np.argwhere(num_bc_detected_by_item >= int(min_efficiency * self.num_bc))
+
+        return CoordsArrayStack(np.squeeze(self[idxs]))
 
 
-    # TODO more efficient approach for the naive method
+    # TODO a more efficient approach for the naive method
     def impute(self, method="naive"):
         """ Impute missing barcode coordinates (detected by a NaN) with the mean position of the neighboring barcodes. 
         Barcode coordinates at either end of the trace cannot be imputed.
 
         Parameters
-        --------
+        -------
         method : str
             naive for neighbor mean imputation
             jost for Daniel Jost's method using conditional multivariate normal distributions for the coordinates
@@ -276,9 +191,9 @@ class CoordsArrayStack(np.ndarray):
                 missing_idxs = np.argwhere(missing_pos_bool).T[0]
                 available_idxs = np.argwhere(available_pos_bool).T[0]
                 new_order = np.concatenate((available_idxs, missing_idxs))
-                mean2_reorg = reorganize(mean2, new_order)
+                mean2_reorg = PairwiseArrayStack._reorganize_pairwise_square_matrix(mean2, new_order)
                 # get sigma matrix
-                sigma = cmp.compute_cov_matrix(mean2_reorg)
+                sigma = PairwiseArrayStack._cov_from_D2_matrix(mean2_reorg)
                 mu = np.zeros((1, self.num_bc-1))
                 mu_available = mu[:,:s-1]
                 mu_missing = mu[:,s-1:]
@@ -287,9 +202,12 @@ class CoordsArrayStack(np.ndarray):
                 sigma_z_nz = sigma[s-1:, 0:s-1]
                 sigma_nz_z = sigma[0:s-1, s-1:]
                 # infer conditional mean and sigma
-                mucondx = mu_missing + (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((x_reorg[1:s] - x_reorg[0]) - mu_available).T)).T
-                mucondy = mu_missing + (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((y_reorg[1:s] - y_reorg[0]) - mu_available).T)).T
-                mucondz = mu_missing + (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((z_reorg[1:s] - z_reorg[0]) - mu_available).T)).T
+                mucondx = mu_missing + \
+                    (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((x_reorg[1:s] - x_reorg[0]) - mu_available).T)).T
+                mucondy = mu_missing + \
+                    (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((y_reorg[1:s] - y_reorg[0]) - mu_available).T)).T
+                mucondz = mu_missing + \
+                    (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((z_reorg[1:s] - z_reorg[0]) - mu_available).T)).T
                 sigcond = sigma_z_z - ((sigma_z_nz @ np.linalg.inv(sigma_nz_nz)) @ sigma_nz_z)
                 # infer missing positions given conditional for each axis
                 x_missing = x_reorg[0] + mucondx
@@ -304,11 +222,10 @@ class CoordsArrayStack(np.ndarray):
                 stack_imputed[n] = tr[:]
 
         stack_imputed = CoordsArrayStack(stack_imputed)
-        
         return stack_imputed
 
 
-####################
+########################################################################
 
 
 
@@ -343,7 +260,153 @@ class PairwiseArrayStack(np.ndarray):
         self.num_bc = getattr(obj, "num_bc", None)
 
 
-    def compute_ensemble(self, method="mean") -> np.ndarray:
+    @staticmethod
+    def _make_pairwise_square_matrix_symmetric(matrix:np.ndarray) -> np.ndarray:
+        """ Build a symmetric version of the input matrix.
+        If the lower triangle matrix is filled with zeros, the upper triangle matrix is copied to the lower whilst
+        retaining the original diagonal elements.
+        Otherwise, it adds the matrix to its transpose and divides the new matrix by two.
+        
+        Parameters
+        -------
+        matrix : two-dimensional square array
+
+        Returns
+        -------
+        a symmetric matrix
+        """
+
+        assert matrix.ndim == 2
+
+        if issymmetric(matrix):
+            return matrix
+        return matrix + matrix.T - np.diag(np.diag(matrix)) if (np.tril(matrix, k=-1) == 0).all() \
+            else (matrix + matrix.T) / 2
+
+
+    @staticmethod
+    def _cov_from_D2_matrix(matrix:np.ndarray) -> np.ndarray:
+        """ Compute the covariance matrix from a symmetric mean-squared distance matrix assuming a Gaussian distribution
+        
+        Parameters
+        -------
+        matrix : two-dimensional square symmetric array
+
+        Returns
+        -------
+        cov : covariance matrix computed using Daniel Jost's method
+        """
+
+        assert matrix.ndim == 2
+        assert issymmetric(matrix)
+        N = matrix.shape[0]
+
+        cov = np.zeros((N-1, N-1))
+        np.fill_diagonal(cov, matrix[0,1:])
+        for i in range(N-1):
+            for j in range(i+1, N-1):
+                cov[i,j] = (cov[i,i] + cov[j,j] - matrix[i+1, j+1]) / 2
+        cov = (cov)
+        
+        return cov
+
+
+    @staticmethod
+    def _normalize_minmax(arr:np.ndarray) -> np.ndarray:
+        """ Normalize the values of an array to the range of [0, 1] using Min-Max Normalization
+        
+        Parameters
+        -------
+        arr : an array
+
+        Returns
+        -------
+        arr_rescaled : rescaled input array
+        """
+
+        arr_min = np.min(arr)
+        arr_rescaled = (arr - arr_min) / (np.max(arr) - arr_min)
+        
+        return arr_rescaled
+
+
+    @staticmethod
+    def _rescale_minmax(arr:np.ndarray, ref:np.ndarray) -> np.ndarray:
+
+        """
+        Rescale the values of an array `arr` to the range of another array `ref` using Min-Max Normalization
+        
+        Parameters
+        -------
+        arr, ref : two arrays
+
+        Returns
+        -------
+        arr_rescaled : rescaled input array
+        """
+        
+        assert np.logical_not(np.isnan(arr).all())
+
+        ref = ref[np.logical_not(np.isnan(ref))]
+        new_min = np.min(ref)
+        new_max = np.max(ref)
+
+        arr_rescaled = (PairwiseArrayStack._normalize_minmax(arr) * (new_max - new_min)) + new_min
+
+        return arr_rescaled
+
+
+    @staticmethod
+    def _regularize_pairwise_square_matrix(matrix:np.ndarray, hack=False) -> np.ndarray:
+        """ Regularize the given matrix to make it positive-definite, i.e., having no negative eigenvalues
+        
+        Parameters
+        -------
+        matrix : two-dimensional square array\n
+        hack : if `True`, the lowest positive eigenvalue will be replaced by a small positive value
+
+        Returns
+        -------
+        matrix_reg : regularised matrix
+        """
+
+        assert matrix.ndim == 2
+        assert issymmetric(matrix)
+
+        eigenvals, eigenvecs = np.linalg.eig(matrix)
+        if np.all(eigenvals > 0) and hack:
+            eigenvals[np.argmin(eigenvals)] = 1e-06
+        else:
+            eigenvals[eigenvals < 0] = 1e-06
+        matrix_reg = eigenvecs @ np.diag(eigenvals) @ np.linalg.inv(eigenvecs)
+        
+        return matrix_reg
+
+
+    # TODO finish the vectorised implementation for a 3D matrix, now it is only for 2D
+    @staticmethod
+    def _reorganize_pairwise_square_matrix(matrix:np.ndarray, idxs) -> np.ndarray:      
+        """ Reorganize a symmetric matrix with new positions for the previous indices
+
+        Parameters
+        -------
+        matrix : two-dimensional symmetric array
+        idxs : indices using which `matrix` will be reorganised
+
+        Returns
+        -------
+        Reorganized matrix based on the new order of original indices
+        """
+
+        assert matrix.ndim == 2
+        assert issymmetric(matrix)
+        assert len(np.unique(idxs)) == len(idxs)
+        assert np.all(np.logical_and(idxs >= 0, idxs < matrix.shape[0]))
+
+        return matrix[:,idxs][idxs]
+
+
+    def compute_ensemble(self, method="mean", regularize=False) -> np.ndarray:
         """Perform ensemble operations on the stack
         
         different methods: mean, median, std, sum, max, min
@@ -372,10 +435,6 @@ class PairwiseArrayStack(np.ndarray):
 
         if self.shape[0] == 1:
             warnings.warn("Note: ensemble operation being performed on an array with only one item")
-
-        # def _gt_lt_oper(X, t, b):
-        #     """Switch between greater than or less than while performing a thresholding operation"""
-        #     return X < t if b == "lt" else X > t
         
         mode = "hard" if hardness == 1 else "soft"
 
@@ -383,24 +442,23 @@ class PairwiseArrayStack(np.ndarray):
             if keep_NaNs:
                 return np.where(np.isnan(self), np.nan, self <= threshold)
             return (self <= threshold).astype(int)
-        
-        # data = np.nan_to_num(data, nan=np.inf)  # convert NaN to Inf
-        result = 1 / (1 + np.exp(hardness * (self - threshold)))
 
+        result = 1 / (1 + np.exp(hardness * (self - threshold)))
         if keep_NaNs:
             return result
         return np.nan_to_num(result, nan=0, copy=True)
+
 
     # TODO verify that the code works correctly, does not appear to do so right now
     def filter(self, efficiency=0.1) -> np.ndarray:
         """ Filter the dataset by minimum number of barcodes present
 
         Parameters
-        ----------
+        -------
         min_efficiency : minimum barcode detection efficiency
 
         Returns
-        ----------
+        -------
         filtered dataset
         """
 
@@ -408,33 +466,13 @@ class PairwiseArrayStack(np.ndarray):
         idxs = np.argwhere(self_num_not_nan > int(efficiency * self.shape[1]))
 
         return np.squeeze(self[idxs])
-    
-
-    # TODO finish the vectorised implementation for a 3D matrix, now it is only for 2D
-    def reorganize(self, idxs) -> np.ndarray:      
-        """ Reorganize a symmetric matrix with new positions for the previous indices
-
-        Parameters
-        ----------
-        matrix : two-dimensional symmetric array
-        idxs : indices using which `matrix` will be reorganised
-
-        Returns
-        ----------
-        Reorganized matrix based on the new order of original indices
-        """
-
-        assert len(np.unique(idxs)) == len(idxs)
-        assert np.all(np.logical_and(idxs >= 0, idxs < self.shape[0]))
-
-        return self[:,idxs][idxs]
 
 
     def plot_pwds_avg(self, path_to_save:str, method="mean", form="triangle", cmap="Reds_r"):
         """ Plot the ensemble-average pairwise distance matrix
         
         Parameters
-        --------
+        -------
         path_to_save : str
             path to save the figure, format is taken automatically from the extension
         method : str
@@ -461,7 +499,7 @@ class PairwiseArrayStack(np.ndarray):
         """ Plot the ensemble-average proximity matrix
         
         Parameters
-        --------
+        -------
         path_to_save : str
             path to save the figure, format is taken automatically from the extension
         form : str
@@ -479,6 +517,3 @@ class PairwiseArrayStack(np.ndarray):
             visualization._plot_2d_triangle(matrix=matrix, path_to_save=path_to_save, cmap=cmap, label="mean proximity")
         else:
             visualization._plot_2d_square(matrix=matrix, path_to_save=path_to_save, cmap=cmap, label="mean proximity")
-
-
-####################

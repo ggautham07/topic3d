@@ -2,7 +2,7 @@
 Full object handler for topic decomposition data and results (:mod:`topic3d.handlers`)
 =====================================================
 
-.. authors:: Gautham Ganesh, Jean-Bernard Fiche, Marcelo Nollmann
+.. authors:: gsgautham98, jbfiche, marcnol
 
 Function reference
 ------------------

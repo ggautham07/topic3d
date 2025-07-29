@@ -2,7 +2,7 @@
 Plotting methods for tracing data and topic decomposition (:mod:`topic3d.visualization`)
 =====================================================
 
-.. authors:: Jean-Bernard Fiche, Marcelo Nollmann, Gautham Ganesh
+.. authors:: jbfiche, marcnol, gsgautham98
 
 Function reference
 ------------------
