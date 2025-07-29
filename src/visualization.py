@@ -1,0 +1,659 @@
+"""
+Plotting methods for tracing data and topic decomposition (:mod:`topic3d.visualization`)
+=====================================================
+
+.. authors:: Jean-Bernard Fiche, Marcelo Nollmann, Gautham Ganesh
+
+Function reference
+------------------
+"""
+
+import numpy as np
+import pandas as pd
+from scipy.spatial.distance import squareform, pdist
+from scipy.stats import fisher_exact
+import matplotlib.pyplot as plt
+import matplotlib.transforms as transforms
+from matplotlib.patches import Patch, Polygon
+import matplotlib.patheffects as patheffects
+import seaborn as sns
+from os import path
+from typing import Dict, List, Tuple
+from collections import Counter
+import math
+from PIL import Image
+
+
+def _plot_2d_triangle(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" "):
+    """Plot a 2D matrix as a triangular matrix with a colorbar
+    
+    Parameters
+    --------
+    path_to_save : str
+        path to save the image, image type is taken based on the extension
+    cmap : 
+        colormap for the plot (default: Reds)
+    label : str
+        label for the colorbar (default: )
+    """
+
+    # Take only upper triangle by masking the lower one
+    data = squareform(matrix) if matrix.ndim == 1 else matrix[:]
+    lower = np.tril(data, k=-1)
+    mask = np.tril(np.ones_like(data, dtype=bool), k=-1)
+    data_masked = np.where(mask, lower, np.nan)
+    num_bc = data_masked.shape[0]
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8.5, 6), constrained_layout=True)
+
+    # Plot with pcolormesh (preferred over imshow for rotation)
+    X, Y = np.meshgrid(np.arange(num_bc+1), np.arange(num_bc+1))
+    pc = ax.pcolormesh(X, Y, data_masked, cmap=cmap, shading="auto")
+
+    # Create a 45° rotation transform around center of the data and apply
+    trans = transforms.Affine2D().rotate_deg_around(num_bc//2, num_bc//2, -45)
+    pc.set_transform(trans + ax.transData)
+
+    # Adjust axis limits to fit rotated content
+    xf = 0.22 * num_bc
+    yf = 0.46 * num_bc
+    ax.set_xlim(-xf, num_bc+xf)
+    ax.set_ylim(yf, num_bc*1.2)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    
+    # TODO align it to the triangle edge
+    cb = fig.colorbar(pc, shrink=0.75, aspect=20, orientation="horizontal")
+    cb.ax.yaxis.set_label_position("right")
+    cb.ax.yaxis.set_ticks_position("left")
+    cb.set_label(label=label, labelpad=16, fontsize=20,)
+    min_val = np.nanmin(data_masked)
+    max_val = np.nanmax(data_masked)
+    mid_val = (max_val + min_val) / 2
+    cb.set_ticks(ticks=[min_val, mid_val, max_val],
+                labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
+                fontsize=22)
+    
+    fig.savefig(path_to_save)
+    plt.close(fig)
+
+
+
+def _plot_2d_square(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" "):
+    """Plot a 2D matrix as a square symmetric matrix with a colorbar
+    
+    Parameters
+    --------
+    path_to_save : str
+        path to save the image, image type is taken based on the extension
+    cmap : str
+        colormap for the plot (default: Reds)
+    label : str
+        label for the colorbar (default: )
+    """
+
+    # Take only upper triangle by masking the lower one
+    data = squareform(matrix) if matrix.ndim == 1 else matrix[:]
+    num_bc = data.shape[0]
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6, 6), constrained_layout=True)
+
+    # # Plot with pcolormesh (preferred over imshow for rotation)
+    # X, Y = np.meshgrid(np.arange(num_bc+1), np.arange(num_bc+1))
+    # pc = ax.pcolormesh(X, Y, data, cmap=cmap, shading="auto")
+
+    pc = ax.imshow(data, cmap=cmap)
+
+    ax.set_aspect("equal")
+    ax.axes.xaxis.set_visible(False)
+    ax.axes.yaxis.set_visible(False)
+
+
+    cb = fig.colorbar(pc, shrink=0.75, aspect=20, orientation="horizontal")
+    cb.ax.yaxis.set_label_position("right")
+    cb.ax.yaxis.set_ticks_position("left")
+    cb.set_label(label=label, labelpad=16, fontsize=20,)
+    cb.set_ticks(ticks=[data.min(), data.min()+data.max()/2, data.max()],
+                labels=[f"{data.min():.2f}", f"{(data.min()+data.max())/2:.2f}", f"{data.max():.2f}"],
+                fontsize=22)
+    
+    fig.savefig(path_to_save)
+    plt.close(fig)
+
+
+##################### FROM JB and MARCELO #######################
+
+# ---------------------------------------------------------------------------
+#  Configuration constants
+# ---------------------------------------------------------------------------
+BRIGHT_Q   = 0.97                   # top‑quantile threshold for hot pixels
+EDGE_TYPES = [
+    "CTCF-CTCF",
+    "CTCF-CRE",
+    "CRE-CRE",
+    "other",
+]
+OR_DIGITS  = 2                      # decimals in overlay text
+
+
+# ---------------------------------------------------------------------------
+#  Helper functions for enrichment analysis
+# ---------------------------------------------------------------------------
+
+def _extract_bin_sets(locus_dict: Dict) -> Tuple[set[int], set[int]]:
+    """Return two *sets* – (ctcf_bins, cre_bins) – parsed from *locus_dict*."""
+    ctcf, cre = set(), set()
+    # --- CTCF --------------------------------------------------------------
+    for orient, bins in locus_dict.get("CTCF", {}).items():
+        ctcf.update(bins if isinstance(bins, list) else [bins])
+    # --- CREs --------------------------------------------------------------
+    cre_raw = locus_dict.get("CREs", {})
+    if isinstance(cre_raw, dict):
+        for bins in cre_raw.values():
+            cre.update(bins if isinstance(bins, list) else [bins])
+    else:                               # user passed a single list
+        cre.update(cre_raw)
+    return ctcf, cre
+
+
+def _bright_mask(mat: np.ndarray, q: float = BRIGHT_Q) -> np.ndarray:
+    """Boolean mask of the brightest *q*‑quantile pixels."""
+    return mat >= np.quantile(mat, q)
+
+
+def _bright_pairs(mat: np.ndarray, q: float = BRIGHT_Q) -> List[Tuple[int, int]]:
+    t = np.quantile(mat, q)
+    rr, cc = np.where(mat >= t)
+    return [(int(i), int(j)) for i, j in zip(rr, cc) if i < j]
+
+
+def _edge_type(i: int, j: int, ctcf: set[int], cre: set[int]) -> str:
+    a, b = i in ctcf, j in ctcf
+    c, d = i in cre,  j in cre
+    if a and b:
+        return "CTCF-CTCF"
+    if c and d:
+        return "CRE-CRE"
+    if (a and d) or (b and c):
+        return "CTCF-CRE"
+    return "other"
+
+
+def odds_ratio_matrix(mat: np.ndarray, locus_dict: Dict, bright_q: float = BRIGHT_Q
+                      ) -> Dict[str, Tuple[float, float]]:
+    """Return **odds ratio and p‑value** for every *EDGE_TYPES* category.
+
+    The 2×2 table is built *within the matrix*:
+
+    ============  =================  ========================
+    cell class    edge == category   edge ≠ category
+    ============  =================  ========================
+    bright        *a*                *b*
+    non‑bright    *c*                *d*
+    ============  =================  ========================
+
+    ``OR = (a/b) / (c/d)`` – computed by *scipy*'s ``fisher_exact`` which also
+    returns the two‑sided p‑value.
+    """
+    ctcf_bins, cre_bins = _extract_bin_sets(locus_dict)
+    # NOTE changed for Bintu data since bins are barcode-based but OR calculation is matrix index-based
+    ctcf_bins = [c-39 for c in ctcf_bins]
+    cre_bins = [c-39 for c in cre_bins]
+
+    bright = _bright_pairs(mat, bright_q)
+    bright_total = len(bright)
+
+    # total edges per type in the *whole* matrix (upper triangle)
+    n = mat.shape[0]
+    type_total = Counter()
+    for i in range(n):
+        for j in range(i + 1, n):
+            et = _edge_type(i, j, ctcf_bins, cre_bins)
+            type_total[et] += 1
+
+    # counts restricted to bright mask
+    bright_type = Counter(_edge_type(i, j, ctcf_bins, cre_bins) for i, j in bright)
+
+    results: Dict[str, Tuple[float, float]] = {}
+    for et in EDGE_TYPES:
+        a = bright_type[et]
+        b = bright_total - a
+        c = type_total[et] - a
+        d = (n * (n - 1) // 2) - bright_total - c
+        OR, p = fisher_exact([[a, b], [c, d]])
+        results[et] = (OR, p)
+    return results
+
+
+def sort_topics_by_representativity(n_topics, LDA_decomposition, min_weight=0.2):
+    """ Using the topic decomposition, sort the topic by their representativity.
+
+    @param min_weight: (float) minimum weight threshold above which the topic is considered relevant
+    @param n_topics: (int) number of topics output by the LDA analysis
+    @param LDA_decomposition: (np.array) topic decomposition for each cell - indicates the weight associated to each
+    topic for the decomposition
+    @return: topic_frequency (np.array) : frequency of finding each topic within the data (after sorting)
+             topic_idx (np.array) : indices used to sort the topics by representativity
+    """
+    topic_representation = [len(LDA_decomposition[LDA_decomposition[:, n] > min_weight, n])
+                            for n in range(n_topics)]
+    topic_representation = np.array(topic_representation)
+    topic_idx = np.argsort(topic_representation)[::-1]
+    topic_frequency = topic_representation / LDA_decomposition.shape[0]
+
+    return topic_frequency, topic_idx
+
+
+def parse_locus_labels(loci_dict, lib):
+    """
+    Parsing function to handle the different labels from the json file:
+    - Handles CTCF as before, indicating the associated barcode and its orientation if it is known
+    - Handles genes by assigning a unique color to each gene's barcode - a legend for the plot will be added later
+    - Handles CREs
+    @param: loci_dict (dict): contains all the loci that should be displayed in the label axis
+    @param: lib (dataframe): library associated to the locus
+    @return: tick_dict (dict): dictionary containing for each barcode a list of tuples with the following information:
+        - group_index - will determine on which line the label will be represented (0 is by default associated to genes,
+        1 to CTCF and 2 to CREs and it corresponds to the order in the input json file)
+        - label_text - for CREs it will be the number of the CRE, for a CTCF site, its orientation
+        - the nature of group ("gene", "CTCF" or "CREs")
+        - the last entry will defer according to the nature of the label. If it is a gene, the last entry will be the
+        color code associated to the gene. Else, it will indicate the positions of the ticks.
+
+    """
+    tick_dict = {}
+    bc_list = lib["barcode_id"].tolist()
+    # gene_palette = list(mcolors.TABLEAU_COLORS.values()) + list(mcolors.CSS4_COLORS.values())
+    # color_idx = 0
+
+    for group_index, (locus_type, group_data) in enumerate(loci_dict.items()):
+        if locus_type == "CTCF":
+            orientation_map = {}
+            for orientation, barcode_list in group_data.items():
+                for p in barcode_list if isinstance(barcode_list, list) else [barcode_list]:
+                    idx = bc_list.index(p)
+                    tick = idx
+                    orientation_map.setdefault(tick, []).append(orientation)
+            for tick, orientations in orientation_map.items():
+                label_text = '\n'.join(orientations)
+                tick_dict.setdefault(tick, []).append((group_index, label_text, "CTCF"))
+            continue
+
+        if locus_type == "genes":
+            for gene, (barcodes, color) in group_data.items():
+                # color = gene_palette[color_idx % len(gene_palette)]
+                # color_idx += 1
+                for p in barcodes if isinstance(barcodes, list) else [barcodes]:
+                    idx = bc_list.index(p)
+                    tick = idx
+                    tick_dict.setdefault(tick, []).append((group_index, "", "gene", color))
+            continue
+
+        if locus_type == "CREs":
+            for cre, barcodes in group_data.items():
+                if isinstance(barcodes, list):
+                    idx_min = bc_list.index(min(barcodes))
+                    idx_max = bc_list.index(max(barcodes))
+                    tick = (idx_min + idx_max) / 2
+                    label_text = str(cre)
+                    tick_dict.setdefault(tick, []).append((group_index, label_text, "CREs", [idx_min, idx_max]))
+                else:
+                    tick = bc_list.index(barcodes)
+                    label_text = str(cre)
+                    tick_dict.setdefault(tick, []).append((group_index, label_text, "CREs", [tick, tick]))
+
+        for locus, bc in group_data.items():
+            if isinstance(bc, list):
+                idx_min = bc_list.index(min(bc))
+                idx_max = bc_list.index(max(bc))
+                tick = (idx_min + idx_max) / 2
+            else:
+                tick = bc_list.index(bc)
+            label_text = str(locus)
+            tick_dict.setdefault(tick, []).append((group_index, label_text))
+
+    return tick_dict
+
+
+def annotate_labels(ax, tick_dict, loc_dict, lib, fontsize=12, line_sep=0.04):
+    """
+    Annotate the triangular plot axis with parsed labels, including:
+    - Orientation markers for CTCF
+    - Gene barcodes with color coding
+    - Generic loci annotations
+    @param ax: current axis associated to the triangular plot
+    @param tick_dict: (dict) parsed dictionnary containing all the ticks
+    @param loc_dict: (dict) initial dicttionary containing all the loci to highlight
+    @param fontsize: (int) indicate the fontsize to use for the labels
+    @param line_sep: (float) indicate the separation between label rows
+    @return:
+    """
+    # 1. Set tick positions and clear labels - the labels will be assigned iteratively in step 2
+    bc_list = lib["barcode_id"].tolist()
+    x_positions = [i for i in range(len(bc_list))]
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels([])
+
+    # 2. Assign tick labels and colors - this is used to indicate the positions of the genes
+    for i, bc in enumerate(bc_list):
+        tick = i  # barcode index
+        label_color = 'black'
+
+        # Check if barcode is associated to a gene
+        tick_pos = tick  # match tick_dict convention
+        if tick_pos in tick_dict:
+            for entry in tick_dict[tick_pos]:
+                if len(entry) == 4 and entry[2] == 'gene':
+                    label_color = entry[3]  # assign gene color
+
+        # Draw the label manually
+        if label_color == 'black':
+            ax.text(
+                x=tick, y=-0.01, s=bc,
+                transform=ax.get_xaxis_transform(),
+                rotation=0,
+                ha='center', va='top',
+                fontsize=fontsize,
+                fontweight='bold',
+                color=label_color  # ✅ this sets the correct color
+                )
+        else:
+            ax.text(
+                x=tick, y=-0.01, s=bc,
+                transform=ax.get_xaxis_transform(),
+                rotation=0,
+                ha='center', va='top',
+                fontsize=fontsize,
+                fontweight='bold',
+                color=label_color,  # ✅ this sets the correct color
+                path_effects=[patheffects.Stroke(linewidth=1.5, foreground='black'), patheffects.Normal()]
+            )
+
+        # Draw a small tick
+        ax.plot([i, i], [0, -0.2], color='black', lw=1, transform=ax.transData, clip_on=False)
+
+    # 3. Add text labels for CTCF, CREs etc.
+    for tick, entries in tick_dict.items():
+        for entry in sorted(entries, key=lambda x: x[0]):
+            group_index = entry[0]
+            offset = -0.01 - line_sep * group_index
+            if len(entry) == 3 and entry[2] == "CTCF":
+                _, label_text, _ = entry
+                ax.text(tick, offset, label_text,
+                        transform=ax.get_xaxis_transform(), ha='center', va='top',
+                        fontsize=fontsize - 3, fontstyle='italic', linespacing=0.4)
+
+            elif len(entry) == 4 and entry[2] == "CREs":
+                label_text = entry[1]
+                idx_min, idx_max = entry[3]
+                # tick_start = idx_min - 0.5
+                # tick_end = idx_max + 0.5
+                # box_width = tick_end - tick_start
+
+                # # Coordinates in unrotated data space
+                # x = idx_min
+                # width = idx_max - idx_min + 1
+                # y = -0.8  # adjust vertically to place below axis
+                # height = 0.5  # vertical height of the box
+
+                # Draw the CRE label with a wide bbox centered on the barcode span
+                ax.text(
+                    x=tick, y=offset, s=label_text,
+                    transform=ax.get_xaxis_transform(),
+                    ha='center', va='top',
+                    fontsize=fontsize,
+                    bbox=dict(boxstyle='round,pad=0.2', edgecolor='black', facecolor='white', linewidth=1,
+                              mutation_aspect=1)
+                )
+
+            # elif len(entry) < 3 or entry[2] != "gene":
+            #     _, label_text = entry[:2]
+            #     # ax.text(tick + 0.5, offset, label_text,
+            #     #         transform=ax.get_xaxis_transform(), ha='center', va='top',
+            #     #         fontsize=12, fontstyle='normal')
+            #     ax.text(tick, offset, label_text,
+            #             transform=ax.get_xaxis_transform(), ha='center', va='top',
+            #             fontsize=12, fontweight='normal',
+            #             bbox=dict(boxstyle='round,pad=0.2', edgecolor='black', facecolor='white', linewidth=1))
+
+    # Add group labels on the left
+    left_x = min(x_positions) - 1 if x_positions else 0
+    for group_index, locus_type in enumerate(loc_dict.keys()):
+        if locus_type == "genes":
+            continue
+        offset = -0.01 - line_sep * group_index
+        ax.text(left_x, offset, locus_type,
+                transform=ax.get_xaxis_transform(), ha='right', va='top',
+                fontsize=fontsize, fontweight='bold')
+
+    return ax
+
+
+def add_gene_legend(ax, loci_dict, location='outside', anchor=(1.05, 1), fontsize=9):
+    """
+    Adds a legend to the plot for genes with their associated colors.
+
+    @param ax: matplotlib axis
+    @param loci_dict: dictionary of loci, must include 'genes'
+    @param location: 'outside' (default), 'inside', or any valid matplotlib location string
+    @param anchor: tuple for bbox_to_anchor if location='outside'
+    @param fontsize: label font size
+    """
+    from matplotlib.patches import Patch
+
+    if "genes" not in loci_dict:
+        return ax
+
+    gene_entries = loci_dict["genes"]
+    # gene_palette = list(mcolors.TABLEAU_COLORS.values()) + list(mcolors.CSS4_COLORS.values())
+    legend_elements = []
+
+    for idx, (gene, (_, color)) in enumerate(gene_entries.items()):
+        # color = gene_palette[idx % len(gene_palette)]
+        patch = Patch(facecolor=color, edgecolor='black', label=gene)
+        legend_elements.append(patch)
+
+    if location == 'outside':
+        ax.legend(handles=legend_elements, title="Genes",
+                  bbox_to_anchor=anchor, loc='upper left', fontsize=fontsize, title_fontsize=fontsize+1)
+    else:
+        ax.legend(handles=legend_elements, title="Genes",
+                  loc=location, fontsize=fontsize, title_fontsize=fontsize+1)
+
+    return ax
+
+
+def plot_decomposition(LDA_decomposition, n_topics, training_path):
+    """ Plot a graph illustrating the representativity of each topic for the decompositions
+
+    @param LDA_decomposition:
+    @param n_topics:
+    @param training_path:
+    @return:
+    """
+    lda_decomposition_ordered = np.empty((0, n_topics), dtype=int)
+    idx = np.argmax(LDA_decomposition, axis=1)
+    for n_topic in range(n_topics):
+        selection = LDA_decomposition[idx == n_topic, :]
+        sorted_selection_idx = np.argsort(selection[:, n_topic])[::-1]  # sort them is descending order
+        lda_decomposition_ordered = np.concatenate((lda_decomposition_ordered, selection[sorted_selection_idx, :]),
+                                                   axis=0)
+
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(1, 1, 1)
+    sns.heatmap(lda_decomposition_ordered, cmap="coolwarm", ax=ax)
+    ax.get_xaxis().set_visible(False)
+    ax.get_xaxis().set_visible(True)
+    saving_filename = path.join(training_path, f'topic_decomposition.png')
+    plt.savefig(saving_filename, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+#  Main pyramid plot with OR overlay
+# ---------------------------------------------------------------------------
+
+def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
+                       lib, locus_dict: Dict,
+                       figname: str,
+                       font_info: Dict[str, int],
+                       line_sep: float,
+                       cmap: str = "Reds",
+                       bright_q: float = BRIGHT_Q) -> None:
+    """Plot a single topic with annotation **and** edge‑type enrichment.
+
+    Besides the behaviour of the original implementation this version:
+      • computes per‑matrix odds ratios using ``odds_ratio_matrix``;
+      • prints every edge type with OR > 1 (sorted descending) onto the
+        triangle, one per line, small font.
+    """
+    # ------------------------------------------------------------------
+    #  Prepare data
+    # ------------------------------------------------------------------
+    topic_sq = squareform(topic) if topic.ndim == 1 else topic
+
+    or_dict = odds_ratio_matrix(topic_sq, locus_dict, bright_q)
+    print(or_dict)
+    enrich  = [(et, OR) for et, (OR, _) in or_dict.items() if OR > 1]
+    enrich.sort(key=lambda x: x[1], reverse=True)
+    print(enrich)
+
+    # ------------------------------------------------------------------
+    #  Base triangular heat‑map (unchanged from original)
+    # ------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(10, 10))
+    im = _plot_triangular_matrix(topic_sq, ax=ax, cmap=cmap)
+
+    tick_dict = parse_locus_labels(locus_dict, lib)
+    ax = annotate_labels(ax, tick_dict, locus_dict, lib,
+                         fontsize=font_info["tick_label"],
+                         line_sep=line_sep)
+    add_gene_legend(ax, locus_dict,
+                    location="outside", anchor=(0, 0.5),
+                    fontsize=font_info["legend"])
+
+    # ------------------------------------------------------------------
+    #  Overlay ORs  -----------------------------------------------------
+    # ------------------------------------------------------------------
+    if enrich:
+        txt_lines = [f"{et}: {OR:.{OR_DIGITS}f}" for et, OR in enrich]
+        ax.text(0.15, 0.45, "\n".join(txt_lines),
+                transform=ax.transAxes,
+                ha="left", va="top", fontsize=font_info["tick_label"],   # - 3 (before)
+                bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="black", lw=0.7))
+
+    # ------------------------------------------------------------------
+    #  Colour‑bar and title (original style) ----------------------------
+    # ------------------------------------------------------------------
+    axpos = ax.get_position()
+    cax = fig.add_axes([axpos.x1 + 0.01, axpos.y0, 0.03, axpos.height / 2])
+    cbar = plt.colorbar(im, cax=cax)
+    cbar.ax.set_ylabel("Pseudocount", fontsize=font_info["tick_label"])
+    cbar.ax.tick_params(labelsize=font_info["tick_label"] - 2)
+
+    ax.text(0.5, 0.55,
+            f"CFM {topic_n} – representativity: {round(topic_repr*100, 1)}%",
+            transform=ax.transAxes,
+            ha="center", va="bottom",
+            fontsize=font_info["title"], fontweight="bold")
+
+    # save & close
+    plt.savefig(figname, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+#  Internal plotting routine (unchanged geometry, but made private)          
+# ---------------------------------------------------------------------------
+
+def _plot_triangular_matrix(topic: np.ndarray, ax=None, cmap: str = "Reds"):
+    """Helper that draws *topic* as a rotated lower‑triangle heat‑map."""
+    import matplotlib.patches as patches
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(10, 10))
+
+    n_bins = topic.shape[0]
+    mask = np.triu(np.ones_like(topic, dtype=bool))
+    topic_masked = np.ma.masked_array(topic, mask=~mask)
+
+    im = ax.imshow(topic_masked, origin="lower", cmap=cmap, interpolation="none")
+
+    # rotate ‑45° so that the matrix diagonal becomes the base of a triangle
+    trans = transforms.Affine2D().rotate_deg(-45).scale(1/ math.sqrt(2), -1/ math.sqrt(2)) + ax.transData
+    im.set_transform(trans)
+
+    # clip to triangle
+    coords = np.array([[-0.5, 0], [n_bins, 0], [n_bins / 2, n_bins / math.sqrt(2)]])
+    triangle = Polygon(coords, closed=True, transform=ax.transData)
+    im.set_clip_path(triangle)
+
+    ax.set_xlim(-1, n_bins)
+    ax.set_ylim(0, n_bins)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    return im
+
+
+def combine_images(columns, space, images, output_path='image.png'):
+    rows = len(images) // columns + (len(images) % columns > 0)
+    width_max = max(Image.open(image).width for image in images)
+    height_max = max(Image.open(image).height for image in images)
+
+    background_width = width_max * columns + space * (columns - 1)
+    background_height = height_max * rows + space * (rows - 1)
+    background = Image.new('RGBA', (background_width, background_height), (255, 255, 255, 255))
+
+    x = 0
+    y = 0
+    for i, image in enumerate(images):
+        img = Image.open(image)
+        x_offset = (width_max - img.width) // 2
+        y_offset = (height_max - img.height) // 2
+        background.paste(img, (x + x_offset, y + y_offset))
+        x += width_max + space
+        if (i + 1) % columns == 0:
+            y += height_max + space
+            x = 0
+
+    background.save(output_path)
+    print(f"Saved combined image to: {output_path}")
+
+
+def visualise_trace(trace:np.ndarray):
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, projection="3d")
+    x, y, z = zip(*trace)
+    ax.scatter(x, y, z, marker='o')
+    ax.plot(x, y, z, linestyle='-', linewidth=1)
+    pos = range(len(trace))
+    for p in pos:
+        ax.text(x[p], y[p], z[p], str(p))
+    ax.set_xlabel("X-axis")
+    ax.set_ylabel("Y-axis")
+    ax.set_zlabel("Z-axis")
+    ax.set_title("Trace")
+    fig.show()
+
+
+def visualise_trace_comparison(trace1:np.ndarray, trace2:np.ndarray):
+    fig = plt.figure(figsize=(10, 10))
+    ax = fig.add_subplot(111, projection="3d")
+    x, y, z = zip(*trace1)
+    ax.scatter(x, y, z, marker='o')
+    ax.plot(x, y, z, linestyle='-', linewidth=1)
+    pos = range(len(trace1))
+    for p in pos:
+        ax.text(x[p], y[p], z[p], str(p))
+    x, y, z = zip(*trace2)
+    ax.scatter(x, y, z, marker='o')
+    ax.plot(x, y, z, linestyle='-', linewidth=1)
+    ax.set_xlabel("X-axis")
+    ax.set_ylabel("Y-axis")
+    ax.set_zlabel("Z-axis")
+    ax.set_title("Trace 1 vs Trace 2")
+    fig.show()
+
+
+    plt.close()
