@@ -32,18 +32,17 @@ import visualization
 class CoordsArrayStack(np.ndarray):
 
     """
-    A stack of arrays of coordinates and their metadata, used primarily for the storage of traces from chromatin 
+    A stack of arrays of coordinates and some metadata, primarily used for the storage of traces from chromatin 
     tracing experiments and coarse-grained polymer simulations
 
     Parameters
     -------
-    a : array_like
-        Array containing numbers whose mean is desired. If `a` is not an
-        array, a conversion is attempted.
+    a : numpy.ndarray
+        Numpy array
 
     Methods
     -------
-    compute_pwds(filename)
+    pwds(filename)
         Read a table from a file
         
     compute_bc_efficiency(column, order='ascending')
@@ -92,36 +91,37 @@ class CoordsArrayStack(np.ndarray):
         self.num_bc = getattr(obj, "num_bc", None)
 
 
-    def compute_CoM(self) -> np.ndarray:
+    def center_of_mass(self) -> np.ndarray:
         """Compute the center of mass (CoM) of each array in the stack"""
 
         return np.nanmean(self, axis=-2)
 
 
-    def compute_pwds(self):
+    def pwds(self):
         """Compute pairwise distances for each array in the stack"""
 
         pwds = np.empty((self.num_items, int((self.num_bc * (self.num_bc - 1)) / 2), ))
         for i in range(self.num_items):
             pwds[i] = pdist(self[i])
-        pwds = PairwiseArrayStack(pwds)
         
+        pwds = PairwiseArrayStack(pwds)
         return pwds
 
 
-    def compute_bc_efficiency(self) -> np.ndarray:
-        """Compute barcode hybridization efficiency (percentage of barcode detection)"""
+    def bc_efficiency(self) -> np.ndarray:
+        """Compute barcode detection efficiency %"""
 
         bc_effs = np.zeros((self.num_bc,))
         for i in range(self.num_bc):
-            num_bc_found = np.sum(~np.isnan(self[:, i, :]).any(axis=1))
-            bc_effs[i] = np.around(num_bc_found * 100 / self.num_items, decimals=1)
+            num_bc_detected = np.sum(~np.isnan(self[:, i, :]).any(axis=1))
+            bc_effs[i] = np.around(num_bc_detected * 100 / self.num_items, decimals=1)
 
         return bc_effs
     
 
     def filter(self, min_efficiency=0.1):
-        """ Filter the dataset by minimum number of barcodes present in the trace
+        """ Filter the dataset by minimum fraction of total barcodes present in the trace. Filtered traces retain the
+        same total number of barcodes, i.e., coordinates are not removed, only traces
 
         Parameters
         -------
@@ -138,10 +138,9 @@ class CoordsArrayStack(np.ndarray):
         return CoordsArrayStack(np.squeeze(self[idxs]))
 
 
-    # TODO a more efficient approach for the naive method
     def impute(self, method="naive"):
         """ Impute missing barcode coordinates (detected by a NaN) with the mean position of the neighboring barcodes. 
-        Barcode coordinates at either end of the trace cannot be imputed.
+        Barcode coordinates at either end of the trace cannot be imputed with the naive method.
 
         Parameters
         -------
@@ -156,17 +155,17 @@ class CoordsArrayStack(np.ndarray):
         """
 
         method = method.lower()
-        assert method == "naive"    # in ["naive", "jost"]
+        assert method in ["naive", "jost"]
 
         if ~np.all(np.isnan(self)):
             warnings.warn("No NaNs to impute in the stack")
             return self
         
         if method == "naive":
-            neighbor_means = (self[:, 2:] + self[:, :-2]) / 2   # compute the mean of all potential neighbors in order
+            neighbor_means = (self[:, 2:] + self[:, :-2]) / 2   # compute the mean pos of all potential neighbors
             stack_imputed = self[:]
-            is_nan = np.isnan(stack_imputed[:, 1:-1])
-            stack_imputed[:, 1:-1][is_nan] = neighbor_means[np.where(is_nan)]   # replace NaNs with mean positions
+            is_missing = np.isnan(stack_imputed[:, 1:-1])   # check missing coordinates
+            stack_imputed[:, 1:-1][is_missing] = neighbor_means[np.where(is_missing)]   # replace NaNs with mean pos
 
         elif method == "jost":
             stack_imputed = self[:]
@@ -265,11 +264,12 @@ class PairwiseArrayStack(np.ndarray):
         """ Build a symmetric version of the input matrix.
         If the lower triangle matrix is filled with zeros, the upper triangle matrix is copied to the lower whilst
         retaining the original diagonal elements.
-        Otherwise, it adds the matrix to its transpose and divides the new matrix by two.
+        Otherwise, it adds the matrix to its transpose and divides the resultant matrix by two.
         
         Parameters
         -------
-        matrix : two-dimensional square array
+        matrix : numpy.ndarray
+            two-dimensional square array
 
         Returns
         -------
@@ -290,11 +290,13 @@ class PairwiseArrayStack(np.ndarray):
         
         Parameters
         -------
-        matrix : two-dimensional square symmetric array
+        matrix : numpy.ndarray 
+            two-dimensional square symmetric array
 
         Returns
         -------
-        cov : covariance matrix computed using Daniel Jost's method
+        cov : numpy.ndarray
+            covariance matrix computed using Daniel Jost's method
         """
 
         assert matrix.ndim == 2
@@ -306,11 +308,43 @@ class PairwiseArrayStack(np.ndarray):
         for i in range(N-1):
             for j in range(i+1, N-1):
                 cov[i,j] = (cov[i,i] + cov[j,j] - matrix[i+1, j+1]) / 2
-        cov = (cov)
         
+        cov = PairwiseArrayStack._make_pairwise_square_matrix_symmetric(cov)
         return cov
+    
+
+    @staticmethod
+    def _D2_matrix_from_cov(cov:np.ndarray) -> np.ndarray:
+        """ Construct a symmetric mean-squared distance matrix from a given covariance matrix assuming a 
+        Gaussian distribution
+        
+        Parameters
+        ----------
+        cov : numpy.ndarray
+            two-dimensional square symmetric covariance array
+        
+        Returns
+        ----------
+        mean2 : numpy.ndarray
+            mean-squared distance matrix computed from `cov`
+        """
+
+        assert cov.ndim == 2
+        N = cov.shape[0] + 1
+
+        mean2 = np.zeros((N, N))    
+        mean2[0,1:] = np.diag(cov)
+        mean2 = PairwiseArrayStack._make_pairwise_square_matrix_symmetric(mean2)
+        for i in range(1, N):
+            for j in range(i+1, N):
+                mean2[i,j] = -2 * cov[i-1, j-1] + cov[i-1, i-1] + cov[j-1, j-1]
+                mean2[j,i] = mean2[i,j]
+        np.fill_diagonal(mean2, 0)
+
+        return mean2
 
 
+    # TODO rewrite as method applied to both self and numpy.ndarrays
     @staticmethod
     def _normalize_minmax(arr:np.ndarray) -> np.ndarray:
         """ Normalize the values of an array to the range of [0, 1] using Min-Max Normalization
@@ -330,6 +364,7 @@ class PairwiseArrayStack(np.ndarray):
         return arr_rescaled
 
 
+    # TODO rewrite as method applied to both self and numpy.ndarrays
     @staticmethod
     def _rescale_minmax(arr:np.ndarray, ref:np.ndarray) -> np.ndarray:
 
@@ -379,11 +414,12 @@ class PairwiseArrayStack(np.ndarray):
         else:
             eigenvals[eigenvals < 0] = 1e-06
         matrix_reg = eigenvecs @ np.diag(eigenvals) @ np.linalg.inv(eigenvecs)
-        
+        # TODO without the following step, will the matrix be symmetric?
+        matrix_reg = PairwiseArrayStack._make_pairwise_square_matrix_symmetric(matrix_reg)  
         return matrix_reg
 
 
-    # TODO finish the vectorised implementation for a 3D matrix, now it is only for 2D
+    # TODO finish the vectorised implementation for a 3D stack (now 2D matrix)
     @staticmethod
     def _reorganize_pairwise_square_matrix(matrix:np.ndarray, idxs) -> np.ndarray:      
         """ Reorganize a symmetric matrix with new positions for the previous indices
@@ -406,10 +442,12 @@ class PairwiseArrayStack(np.ndarray):
         return matrix[:,idxs][idxs]
 
 
-    def compute_ensemble(self, method="mean", regularize=False) -> np.ndarray:
-        """Perform ensemble operations on the stack
+    def ensemble(self, method="mean", regularize=False) -> np.ndarray:
+        """Perform ensemble operations on the stack accounting for NaNs
         
         different methods: mean, median, std, sum, max, min
+
+        regularize to make the matrix positive definite (no negative eigenvalues)
         """
 
         methods = {"mean": np.nanmean, "median": np.nanmedian, "std": np.nanstd,
@@ -418,12 +456,16 @@ class PairwiseArrayStack(np.ndarray):
 
         if self.num_items == 1:
             warnings.warn("Note: ensemble operation being performed on an array with only one item")
-
-        return methods[method](self.data[:], axis=0)
+            return squareform(self._regularize_pairwise_square_matrix(squareform(self.data[0]))) \
+                if regularize else self.data[0][:]
+        
+        ensemble_matrix = methods[method](self.data[:], axis=0)
+        return squareform(self._regularize_pairwise_square_matrix(squareform(ensemble_matrix))) \
+            if regularize else ensemble_matrix
 
 
     # NOTE jb's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
-    def compute_proximity(self, threshold:Number, hardness=1, keep_NaNs=False):
+    def proximity(self, threshold:Number, hardness=1, keep_NaNs=False):
         """Compute hard or soft proximity using a threshold
         
         For hard proximity. Hardness describes sigmoid slope, 0 < hardness <= 1, where 1 means hard"""
@@ -449,8 +491,8 @@ class PairwiseArrayStack(np.ndarray):
         return np.nan_to_num(result, nan=0, copy=True)
 
 
-    # TODO verify that the code works correctly, does not appear to do so right now
-    def filter(self, efficiency=0.1) -> np.ndarray:
+    # TODO verify that the function works correctly
+    def filter(self, min_efficiency: Number = 0.1) -> np.ndarray:
         """ Filter the dataset by minimum number of barcodes present
 
         Parameters
@@ -462,13 +504,15 @@ class PairwiseArrayStack(np.ndarray):
         filtered dataset
         """
 
-        self_num_not_nan = np.sum(~np.isnan(self), axis=1)
-        idxs = np.argwhere(self_num_not_nan > int(efficiency * self.shape[1]))
+        prop_bins_not_missing = np.mean(~np.isnan(self), axis=1)
+        idxs = np.argwhere(prop_bins_not_missing > min_efficiency)
 
         return np.squeeze(self[idxs])
 
 
-    def plot_pwds_avg(self, path_to_save:str, method="mean", form="triangle", cmap="Reds_r"):
+    def plot_pwds_avg(self, path_to_save: str,
+                      method: str = "mean",
+                      form: str = "triangle", cmap: str = "Reds_r"):
         """ Plot the ensemble-average pairwise distance matrix
         
         Parameters
@@ -485,8 +529,9 @@ class PairwiseArrayStack(np.ndarray):
 
         assert isinstance(path_to_save, str)
         assert form in ["triangle", "square"]
+        assert isinstance(method, str) and method in ["mean", "median"]
 
-        matrix = self.compute_ensemble(method=method)
+        matrix = self.ensemble(method=method)
         if form == "triangle":
             visualization._plot_2d_triangle(matrix=matrix, path_to_save=path_to_save,
                                             cmap=cmap, label=f"{method} distance")
@@ -495,7 +540,9 @@ class PairwiseArrayStack(np.ndarray):
                                           cmap=cmap, label=f"{method} distance")
 
 
-    def plot_proximity_avg(self, path_to_save:str, threshold:Number, hardness=1, form="triangle", cmap="Reds"):
+    def plot_proximity_avg(self, path_to_save: str,
+                           threshold: Number, hardness: Number = 1,
+                           form: str = "triangle", cmap: str = "Reds"):
         """ Plot the ensemble-average proximity matrix
         
         Parameters
@@ -511,7 +558,7 @@ class PairwiseArrayStack(np.ndarray):
         assert isinstance(path_to_save, str)
         assert form in ["triangle", "square"]
 
-        proximity_stack = self.compute_proximity(threshold=threshold, hardness=hardness)
+        proximity_stack = self.proximity(threshold=threshold, hardness=hardness)
         matrix = np.nanmean(proximity_stack, axis=0)
         if form == "triangle":
             visualization._plot_2d_triangle(matrix=matrix, path_to_save=path_to_save, cmap=cmap, label="mean proximity")

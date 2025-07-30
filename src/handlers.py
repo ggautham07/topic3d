@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 Full object handler for topic decomposition data and results (:mod:`topic3d.handlers`)
 =====================================================
@@ -30,9 +31,17 @@ from datatypes import CoordsArrayStack, PairwiseArrayStack
 
 
 class RawData:
+    """ Data handler for raw data file types: .npy, .csv for Fish Omics Format (FOF) are accepted
+    
+    Create an instance of the object and use the method `load(path_to_file:str)` to load the data
+    
+    Data can be processed to produce a `ProcessedData` object with the `process()` method
+    
+    Note: the highest amount of information can only be captured from a FOF file
+    """
 
     def __init__(self):
-        self.fofdata = None
+        self.library = None
         self.unit = None
         self.assembly = None
         self.trace_ids = None
@@ -43,7 +52,7 @@ class RawData:
 
 
     def __str__(self):
-        return (f"FOF-CT data: {self.fofdata is not None}\n"
+        return (f"FOF-CT data: {self.library is not None}\n"
                 f"Trace array: {self.traces is not None}\n"
                 f"Genome assembly: {self.assembly}\n"
                 f"Measurement unit: {self.unit}\n"
@@ -51,8 +60,8 @@ class RawData:
                 f"Number of traces: {self.num_traces}\n"
                 )
     
-
-    def _findnsplit(self, full_seq:str, sub_seq:str) -> list:
+    @staticmethod
+    def _findnsplit(full_seq:str, sub_seq:str) -> list:
         """ Find the first occurrence of a string within another and split into two at a newline"""
         return full_seq[full_seq.index(sub_seq):].split("\n", maxsplit=1)
     
@@ -64,7 +73,7 @@ class RawData:
         traces[:] = np.nan
         # create the trace from the coordinates
         for j, curr_trace_id in enumerate(self.trace_ids):
-            curr_data = self.fofdata[self.fofdata["Trace_ID"] == curr_trace_id]
+            curr_data = self.library[self.library["Trace_ID"] == curr_trace_id]
             barcodes = [self.bc_ids[x] for x in curr_data["Chrom_Start"].to_list()]
             coords = curr_data[["X", "Y", "Z"]].to_numpy()
             traces[j, barcodes] = coords[:]
@@ -84,7 +93,7 @@ class RawData:
         if path_to_file.endswith(".npy"):
             self.traces = CoordsArrayStack(np.load(path_to_file, allow_pickle=True))
             assert self.traces.data.shape[-1] == 3
-            del self.fofdata
+            del self.library
 
         elif path_to_file.endswith(".csv"):
 
@@ -102,11 +111,11 @@ class RawData:
             unit = self._findnsplit(contents, "##XYZ_unit")[0].split("=")[1]
 
             # Variable assignment
-            self.fofdata = data
+            self.library = data
             self.unit = unit
             self.assembly = assembly
 
-            self.trace_ids = np.unique(self.fofdata["Trace_ID"])
+            self.trace_ids = np.unique(self.library["Trace_ID"])
             self.num_traces = len(self.trace_ids)
 
             starts = np.unique(data["Chrom_Start"])
@@ -126,94 +135,17 @@ class RawData:
         assert self.traces is not None
         prc_data = ProcessedData()
         prc_data.traces = self.traces
-        prc_data.bc_effs = self.traces.compute_bc_effs()
-        prc_data.pwds = self.traces.compute_pwds()
+        prc_data.bc_effs = self.traces.bc_efficiency()
+        prc_data.pwds = self.traces.pwds()
         prc_data.bc_list = self.bc_ids
-        prc_data.metadata = None
+        if self.library is None:
+            prc_data.metadata = None
+        else:
+            prc_data.metadata = {}
+
         return prc_data
-
-
-####################
-
-
-class ProcessedData:
-
-    def __init__(self):
-        self.traces = None
-        self.pwds = None
-        self.bins = None
-        self.bc_effs = None
-        self.metadata = None
-        self.bc_list = None
-
-    def __str__(self):
-        return (f"traces: {self.traces is not None}\n"
-                f"pwds: {self.pwds is not None}\n"
-                f"bc_effs: {self.bc_effs is not None}\n"
-                f"metadata: {self.metadata}\n"
-                )
-
-
-    def load(self, path_to_file:str):
-        # assert path.isfile(path_to_file)
-        assert path_to_file.endswith(".h5")
-        with h5py.File(path_to_file, mode="r") as handler:
-            datasets = {x:y[:] for x, y in handler.items()}
-            attributes = {x:y[:] for x, y in handler.attrs.items()}
-        self.traces = datasets.get("traces", None)
-        if self.traces is not None:
-            self.traces = CoordsArrayStack(self.traces)
-        self.pwds = PairwiseArrayStack(datasets.get("pwds", None))
-        self.bc_effs = datasets.get("bc_effs", None)
-        self.metadata = attributes
-
-
-    def save(self, path_to_file:str, replace=True):
-        if path.isfile(path_to_file) and not replace:
-            raise FileExistsError("File already exists and replace is set to False")
-        attr_labels = [attr for attr in dir(self) if not callable(getattr(self, attr)) and not attr.startswith("__")]
-        print(attr_labels)
-        with h5py.File(path_to_file, mode="w") as handler:
-            for al in attr_labels:
-                attr = getattr(self, al)
-                try:
-                    print(al, type(attr), attr.dtype)
-                    handler.create_dataset(name=al, data=attr)
-                    print(f"Saved {al} successfully")
-                except AttributeError:
-                    pass
-                except TypeError:
-                    handler.attrs[al] = attr
-                    print(f"Saved {al} successfully as attribute")
-    
-
-    def plot_contacts_avg(self, threshold):
-        contacts = np.where(np.isnan(self.pwds), np.nan, self.pwds < threshold)
-        contacts_ensemble = squareform(np.nanmean(contacts, axis=0))
-        np.fill_diagonal(contacts_ensemble, 1)
-        vmin = np.nanmin(contacts_ensemble)
-        vmax = np.quantile(contacts_ensemble, 0.99)
-        if np.isnan(vmax):
-            vmax = np.nanmax(contacts_ensemble)
-        plt.figure(figsize=(8, 6))
-        im = plt.imshow(contacts_ensemble, cmap="Reds", vmin=vmin, vmax=vmax)
-        plt.colorbar(label="contact freq")
-        plt.tight_layout()
-        return im
     
     
-    def plot_end_to_end_dist():
-        """"""
-
-
-    def plot_pwds_distribution():
-        """"""
-    
-
-    def plot_bc_effs():
-        """"""
-
-
     def _compute_3d_vs_genomic_distance(pairwise_dist, gen_dist, gen_dist_bins, dist_threshold=1., experiment=None,
                                     axis='X'):
         """Using the genomic distance between the barcodes, compute the median 3d distance as a function of the genomic
@@ -307,12 +239,97 @@ class ProcessedData:
         fig_path = path.join(root, "barcode_efficiency", fig_name)
         plt.savefig(fig_path, format="png")
 
+
+####################
+
+
+class ProcessedData:
+
+    def __init__(self):
+        self.traces = None
+        self.pwds = None
+        self.bins = None
+        self.bc_effs = None
+        self.metadata = None
+        self.bc_list = None
+
+    def __str__(self):
+        return (f"traces: {self.traces is not None}\n"
+                f"pwds: {self.pwds is not None}\n"
+                f"bc_effs: {self.bc_effs is not None}\n"
+                f"metadata: {self.metadata}\n"
+                )
+
+
+    def load(self, path_to_file:str):
+        # assert path.isfile(path_to_file)
+        assert path_to_file.endswith(".h5")
+        with h5py.File(path_to_file, mode="r") as handler:
+            datasets = {x:y[:] for x, y in handler.items()}
+            attributes = {x:y[:] for x, y in handler.attrs.items()}
+        self.traces = datasets.get("traces", None)
+        if self.traces is not None:
+            self.traces = CoordsArrayStack(self.traces)
+        self.pwds = PairwiseArrayStack(datasets.get("pwds", None))
+        self.bc_effs = datasets.get("bc_effs", None)
+        self.metadata = attributes
+
+
+    def save(self, path_to_file:str, replace=True):
+        if path.isfile(path_to_file) and not replace:
+            raise FileExistsError("File already exists and replace is set to False")
+        attr_labels = [attr for attr in dir(self) if not callable(getattr(self, attr)) and not attr.startswith("__")]
+        print(attr_labels)
+        with h5py.File(path_to_file, mode="w") as handler:
+            for al in attr_labels:
+                attr = getattr(self, al)
+                try:
+                    print(al, type(attr), attr.dtype)
+                    handler.create_dataset(name=al, data=attr)
+                    print(f"Saved {al} successfully")
+                except AttributeError:
+                    pass
+                except TypeError:
+                    handler.attrs[al] = attr
+                    print(f"Saved {al} successfully as attribute")
+    
+
+    def plot_contacts_avg(self, threshold):
+        contacts = np.where(np.isnan(self.pwds), np.nan, self.pwds < threshold)
+        contacts_ensemble = squareform(np.nanmean(contacts, axis=0))
+        np.fill_diagonal(contacts_ensemble, 1)
+        vmin = np.nanmin(contacts_ensemble)
+        vmax = np.quantile(contacts_ensemble, 0.99)
+        if np.isnan(vmax):
+            vmax = np.nanmax(contacts_ensemble)
+        plt.figure(figsize=(8, 6))
+        im = plt.imshow(contacts_ensemble, cmap="Reds", vmin=vmin, vmax=vmax)
+        plt.colorbar(label="contact freq")
+        plt.tight_layout()
+        return im
+    
+    
+    def plot_end_to_end_dist():
+        """"""
+
+
+    def plot_pwds_distribution():
+        """"""
+    
+
+    def plot_bc_effs():
+        """"""
+
     
 
 ####################
 
 
 class DecompositionResult:
+    """ Decomposition results handler, reads and writes results
+    
+    Methods for post-processing to compute coherence, 
+    """
 
     def __init__(self, model:LatentDirichletAllocation, decomposition:np.ndarray):
         self.model = model

@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 """
 Plotting methods for tracing data and topic decomposition (:mod:`topic3d.visualization`)
 =====================================================
