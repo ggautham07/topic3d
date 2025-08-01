@@ -655,6 +655,4 @@ def visualise_trace_comparison(trace1:np.ndarray, trace2:np.ndarray):
     ax.set_zlabel("Z-axis")
     ax.set_title("Trace 1 vs Trace 2")
     fig.show()
-
-
     plt.close()
