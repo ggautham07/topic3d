@@ -9,6 +9,12 @@ Function reference
 ------------------
 """
 
+
+# =============================================================================
+# IMPORTS
+# =============================================================================
+
+from numbers import Number
 from os import path
 from io import StringIO
 import h5py
@@ -17,17 +23,20 @@ import pandas as pd
 from scipy.spatial.distance import squareform, pdist, cdist
 from scipy.linalg import issymmetric
 from scipy.cluster.hierarchy import linkage
+import seaborn
 from sklearn.decomposition import LatentDirichletAllocation
 import matplotlib.pyplot as plt
-from itertools import combinations
+from itertools import combinations, product
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import joblib as jl
-from hdbscan import HDBSCAN
-
 from datatypes import CoordsArrayStack, PairwiseArrayStack
 
-####################
+
+
+# =============================================================================
+# CLASSES
+# =============================================================================
 
 
 class RawData:
@@ -49,6 +58,7 @@ class RawData:
         self.num_traces = None
         self.num_bc = None
         self.bc_ids = None
+        self.bc_bins = None
 
 
     def __str__(self):
@@ -60,9 +70,13 @@ class RawData:
                 f"Number of traces: {self.num_traces}\n"
                 )
     
+
     @staticmethod
-    def _findnsplit(full_seq:str, sub_seq:str) -> list:
-        """ Find the first occurrence of a string within another and split into two at a newline"""
+    def _extract_header_row_from_fof(full_seq:str, sub_seq:str) -> list:
+        """ Internal function used to extract header rows from Fish Omics Format (FOF) data
+        Finds the first occurrence of sub_seq in full_seq and splits it at the first newline
+        """
+
         return full_seq[full_seq.index(sub_seq):].split("\n", maxsplit=1)
     
 
@@ -77,6 +91,7 @@ class RawData:
             barcodes = [self.bc_ids[x] for x in curr_data["Chrom_Start"].to_list()]
             coords = curr_data[["X", "Y", "Z"]].to_numpy()
             traces[j, barcodes] = coords[:]
+        
         return traces
 
     
@@ -99,7 +114,7 @@ class RawData:
 
             # load the data and organize them as a dataframe
             contents = open(path_to_file, mode="r").read()  # load all contents as string
-            table_header_raw, table_data_raw = self._findnsplit(contents,
+            table_header_raw, table_data_raw = self._extract_header_row_from_fof(contents,
                                                                 "##columns")  # split the header from the trace data
             colnames = table_header_raw[table_header_raw.index("(")+1:table_header_raw.index(")")].split(",")
             colnames = [c.strip() for c in colnames]  # get column names
@@ -107,8 +122,8 @@ class RawData:
             data.columns = colnames  # assign column names to trace table
 
             # Locating other key metadata
-            assembly = self._findnsplit(contents, "##genome_assembly")[0].split("=")[1]
-            unit = self._findnsplit(contents, "##XYZ_unit")[0].split("=")[1]
+            assembly = self._extract_header_row_from_fof(contents, "##genome_assembly")[0].split("=")[1]
+            unit = self._extract_header_row_from_fof(contents, "##XYZ_unit")[0].split("=")[1]
 
             # Variable assignment
             self.library = data
@@ -118,9 +133,12 @@ class RawData:
             self.trace_ids = np.unique(self.library["Trace_ID"])
             self.num_traces = len(self.trace_ids)
 
-            starts = np.unique(data["Chrom_Start"])
-            self.bc_ids = dict(zip(starts, range(len(starts))))
-            self.num_bc = len(starts)
+            chrom_starts = np.unique(data["Chrom_Start"])
+            chrom_ends = np.unique(data["Chrom_End"])
+            assert len(chrom_starts) == len(chrom_ends)
+            self.num_bc = len(chrom_starts)
+            self.bc_ids = list(range(self.num_bc))
+            self.bc_bins = dict(zip(self.bc_ids, zip(chrom_starts, chrom_ends)))
 
             # Extraction of traces
             self.traces = CoordsArrayStack(self._extract_traces_from_fof())
@@ -137,17 +155,16 @@ class RawData:
         prc_data.traces = self.traces
         prc_data.bc_effs = self.traces.bc_efficiency()
         prc_data.pwds = self.traces.pwds()
-        prc_data.bc_list = self.bc_ids
         if self.library is None:
             prc_data.metadata = None
         else:
-            prc_data.metadata = {}
-
+            self.bc_bin_sizes = [end - start for start, end in self.bc_bins.values()]
+            prc_data.metadata = {"bc_bins": self.bc_bins,
+                                 "bc_bin_sizes": self.bc_bin_sizes}
         return prc_data
     
     
-    def _compute_3d_vs_genomic_distance(pairwise_dist, gen_dist, gen_dist_bins, dist_threshold=1., experiment=None,
-                                    axis='X'):
+    def compute_3d_vs_genomic_dist(self, max_realistic_3d_dist : Number):
         """Using the genomic distance between the barcodes, compute the median 3d distance as a function of the genomic
         distance.
 
@@ -161,97 +178,58 @@ class RawData:
         dist: (pandas dataframe) contains all the data for the histogram
 
         """
-        n_maps = pairwise_dist.shape[0]
 
-        # compile all the distance map and aggregate genetic and euclidean distances
-        merged_list = []
-        for i in range(n_maps):
-            merged = np.column_stack((gen_dist, pairwise_dist[i, :]))
-            merged_list.append(merged)
+        pw_dists_3d = self.traces.pwds()
+        pw_dists_genomic = np.asarray([np.mean(self.bc_bins[j]) - np.mean(self.bc_bins[i]) \
+                               for i, j in combinations(self.bc_ids, 2)])
 
-        merged_dist = np.array(merged_list)
-        merged_dist = np.reshape(merged_dist, (n_maps * len(gen_dist), 2))
-        merged_dist[merged_dist[:, 1] > dist_threshold, 1] = np.nan
+        # compile all the distance maps and aggregate genetic and euclidean distances
+        pw_dists_genomic_3d_combined = []
+        for i in range(self.num_traces):
+            merged = np.column_stack((pw_dists_genomic, pw_dists_3d[i, :]))
+            pw_dists_genomic_3d_combined.append(merged)
+
+        pw_dists_genomic_3d_combined = np.asarray(pw_dists_genomic_3d_combined)
+        pw_dists_genomic_3d_combined = np.reshape(pw_dists_genomic_3d_combined,
+                                                       (self.num_traces * len(pw_dists_genomic), 2))
+        pw_dists_genomic_3d_combined[pw_dists_genomic_3d_combined[:, 1] > max_realistic_3d_dist, 1] = np.nan
 
         # to make the plot easier to read, data are binned
-        gen_bin = np.linspace(start=np.min(gen_dist), stop=np.max(gen_dist)+1, num=gen_dist_bins)
-        d_vs_gen_dist = np.zeros((len(gen_bin), 3))
-        for bin in range(len(gen_bin) - 1):
-            idx = np.where((merged_dist[:, 0] >= gen_bin[bin]) & (merged_dist[:, 0] < gen_bin[bin+1]))
-            d_vs_gen_dist[bin, :] = [gen_bin[bin], np.nanmedian(merged_dist[idx, 1]), len(idx[0])]
+        bins_genomic = np.linspace(start=np.min(pw_dists_genomic), stop=np.max(pw_dists_genomic)+1, num=20)
+        dists_3d_vs_genomic = np.zeros((len(bins_genomic), 3))
+        for bin in range(len(bins_genomic) - 1):
+            idx = np.where((pw_dists_genomic_3d_combined[:, 0] >= bins_genomic[bin]) & \
+                           (pw_dists_genomic_3d_combined[:, 0] < bins_genomic[bin+1]))
+            dists_3d_vs_genomic[bin, :] = [bins_genomic[bin], 
+                                           np.nanmedian(pw_dists_genomic_3d_combined[idx, 1]), 
+                                           len(idx[0])]
 
         # convert to dataframe
-        dist = pd.DataFrame()
-        dist['genomic distance (kbp)'] = d_vs_gen_dist[:, 0]
-        dist['log10 genomic dist (kbp)'] = np.log10(d_vs_gen_dist[:, 0])
-        dist['median euclidean distance (nm)'] = d_vs_gen_dist[:, 1]
-        dist['log10 median dist (nm)'] = np.log10(d_vs_gen_dist[:, 1])
-        dist['n_data'] = d_vs_gen_dist[:, 2]
-        dist['experiment'] = [f'exp_{experiment}'] * len(gen_bin)
-        dist['axis'] = [axis] * len(gen_bin)
-        return dist
-        
+        results = pd.DataFrame()
+        results["genomic distance"] = dists_3d_vs_genomic[:, 0]
+        results["log10 genomic dist"] = np.log10(dists_3d_vs_genomic[:, 0])
+        results["median euclidean distance"] = dists_3d_vs_genomic[:, 1]
+        results["log10 median dist"] = np.log10(dists_3d_vs_genomic[:, 1])
+        results["n_data"] = dists_3d_vs_genomic[:, 2]
 
-    def _compute_inter_loci_genomic_dist(lib, n_bins):
-        """ Compute the genomic distance separating two consecutive barcodes (from the experiment)
+        return results
 
-        @param lib: (pandas dataframe) coordinates of the barcodes
-        @param n_bins: (int) total number of barcodes of the library
-        @return: locus_dist: (pandas dataframe) contains the genomic distance in kbp
-        """
-        locus_dist = pd.DataFrame()
-        mean_pos = (lib["Chrom_End"] + lib["Chrom_Start"]) / 2
-
-        for bin in range(n_bins-1):
-            d = mean_pos[bin + 1] - mean_pos[bin]
-            d = int(d /1000)
-            if bin == 0:
-                d_interloci = [d]
-                locus = [f'locus_{bin}_{bin+1}']
-            else:
-                d_interloci = np.concatenate((d_interloci, [d]), axis=0)
-                locus = locus + [f'locus_{bin}_{bin+1}']
-
-        locus_dist['locus'] = locus
-        locus_dist['genomic distance (kbp)'] = d_interloci
-        return locus_dist
-
-
-    def _compute_efficiency_map(pwd, path_to_save):
-        """ Compute efficiency map.
-
-        @param pwd: (numpy array) pairwise distance maps
-        @param root: (str) root folder
-        @param tag_exp: (str) indicate the type of experiment that is analyzed
-        """
-        n_maps = pwd.shape[0]
-        efficiency = np.zeros((pwd.shape[1],))
-        for n in range(pwd.shape[1]):
-            efficiency[n] = np.sum(~np.isnan(pwd[:, n])) * 100 / n_maps
-        efficiency = squareform(efficiency)
-
-        plt.figure(figsize=(8, 6))
-        plt.imshow(efficiency, cmap="hot")
-        plt.colorbar(label="efficiency")
-        plt.tight_layout()
-        plt.title(f'{tag} n={pwd.shape[0]}')
-        fig_name = f"Efficiency_{tag_exp}.png"
-        fig_path = path.join(root, "barcode_efficiency", fig_name)
-        plt.savefig(fig_path, format="png")
-
-
-####################
 
 
 class ProcessedData:
+    """ Handler for processed data, both loading and saving
+    
+    Methods for plotting, computations can only be performed on RawData objects or separately using array functions
+    
+    Metadata includes barcode list, their genomic bins and detection efficiencies
+    """
 
     def __init__(self):
         self.traces = None
         self.pwds = None
-        self.bins = None
         self.bc_effs = None
         self.metadata = None
-        self.bc_list = None
+
 
     def __str__(self):
         return (f"traces: {self.traces is not None}\n"
@@ -320,63 +298,70 @@ class ProcessedData:
     def plot_bc_effs():
         """"""
 
-    
-
-####################
 
 
 class DecompositionResult:
-    """ Decomposition results handler, reads and writes results
+    """ Decomposition results handler, loads and saves results
     
-    Methods for post-processing to compute coherence, 
+    Methods for post-processing described to compute coherence, consensus, embedding and clustering
     """
 
-    def __init__(self, model:LatentDirichletAllocation, decomposition:np.ndarray):
+    def __init__(self, model:LatentDirichletAllocation, decomposition:np.ndarray, **kwargs):
         self.model = model
         self.decomposition = decomposition
         self.components = model.components_
-            
+        self.metadata = {}
+        
+        # TODO store original dataset indices of the training and testing sets using self.data_idxs = kwargs.get()
+        self.data_training = kwargs.get("data_training", None)
+        if self.data_training is not None:
+            assert isinstance(self.data_training, (PairwiseArrayStack, np.ndarray))
+        self.data_testing = kwargs.get("data_testing", None)
+        if self.data_testing is not None:
+            assert isinstance(self.data_testing, (PairwiseArrayStack, np.ndarray))
+
 
     def save(self, path_to_dir:str):
+        """Save the decomposition results to a joblib file for the model, json file for metadata and a 
+        HDF5 file for everything else"""
+        
         with h5py.File(path.join(path_to_dir, "results.h5"), mode="w") as handler:
             handler.create_dataset(name="components", data=self.components)
             handler.create_dataset(name="decomposition", data=self.decomposition)
+            handler.create_dataset(name="data_training", data=self.data_training)
+            handler.create_dataset(name="data_testing", data=self.data_testing)
+            handler.attrs = self.metadata
+        
         import joblib
         joblib.dump(self.model, path.join(path_to_dir, "model.jl"))
 
-    
-    def jsd_cluster(self, clusters, components_by_cluster):
-        cluster_pairs = list(combinations(clusters, 2))
-        div = np.empty(len(cluster_pairs))
-        for i, (c0, c1) in enumerate(cluster_pairs):
-            div[i] = np.mean(cdist(components_by_cluster[c0], components_by_cluster[c1], metric="jensenshannon"))
-        div = squareform(div)
-        np.fill_diagonal(div, [np.mean(pdist(components_by_cluster[cluster], metric="jensenshannon")) for cluster in clusters])
 
-        fig, ax = plt.subplots()
-        fig.set_figwidth(10)
-        fig.set_figheight(8)
-        im = ax.imshow(div, cmap="Blues")
-        cbar = fig.colorbar(im, shrink=0.85)
-        cbar.set_label("mean Jensen-Shannon divergence", labelpad=6)
-        ax.xaxis.tick_top()
-        ax.xaxis.set_label_position("top")
-        ax.set_xticks(np.arange(len(clusters)), labels=clusters);
-        ax.set_yticks(np.arange(len(clusters)), labels=clusters);
-        ax.tick_params("x", labelsize=10)
-        ax.tick_params("y", labelsize=10)
-        ax.set_xlabel("Cluster #", labelpad=10)
-        ax.set_ylabel("Cluster #", labelpad=10)
-        plt.tight_layout()
-        fig.savefig(f"{dir_results}/{tag}_jsd_heatmap.png", dpi=300)
+    def reconstruct(self):
+        """Reconstruct single-cell maps using components and decomposition"""
+        
+        return self.decomposition @ self.components
+        
 
-        assert issymmetric(div)
+    # TODO
+    def coherence(self, method="npmi"):
+        """Compute the coherence of the decomposition"""
+
+        assert isinstance(method, str) and method.lower() in ["npmi", "cos", "umass", "jsd"]
+        assert self.data_training is not None
+
+        return
 
 
-    def embed(self, method="UMAP", cluster=False, **kwargs):
+    def embed(self, path_to_save: str, method: str = "UMAP", cluster: bool = False, **kwargs):
 
         if method.lower().strip() == "umap":
-        
+            try:
+                from umap import UMAP
+                if cluster:
+                    from hdbscan import HDBSCAN
+            except ImportError:
+                raise
+            
             # UMAP parameters list
             metric = "cosine"
             n_umap_components = 2
@@ -392,22 +377,21 @@ class DecompositionResult:
 
             for i, (min_dist, num_neighbors) in enumerate(param_sets):
 
-                reducer = umap.UMAP(
+                reducer = UMAP(
                     n_neighbors=num_neighbors,
                     min_dist=min_dist,
                     metric=metric,
                     n_components=2,
                     random_state=42,
                 )
-                reducer.fit(components_all)
-                jl.dump(reducer, path.join(dir_results,
-                                        "optimization",
-                                        f"{tag_wt}-{tag_mut}-combined-{num_components_wt}-{num_components_mut}_UMAP-components" \
-                                        f"_model_md={min_dist}_nn={num_neighbors}.jl"))
-                embedding = reducer.transform(components_all)
+                embedding = reducer.fit_transform(self.decomposition)
+                # jl.dump(reducer, path.join(dir_results,
+                #                         "optimization",
+                #                         f"{tag_wt}-{tag_mut}-combined-{num_components_wt}-{num_components_mut}_UMAP-components" \
+                #                         f"_model_md={min_dist}_nn={num_neighbors}.jl"))
                 embedding_df = pd.DataFrame(embedding, columns=["UMAP_1", "UMAP_2"])
 
-                sns.scatterplot(data=embedding_df,
+                seaborn.scatterplot(data=embedding_df,
                                 x="UMAP_1", y="UMAP_2",
                                 s=10, alpha=0.4, color="#216eff", edgecolor="none",
                                 legend=False,
@@ -415,17 +399,17 @@ class DecompositionResult:
                 axes.flat[i].set_title(f"min_dist={min_dist}, num_neighbors={num_neighbors}")
 
             fig.tight_layout()
-            fig.savefig(path.join(dir_results,
-                                "optimization",
-                                f"{tag_wt}-{tag_mut}-combined-{num_components_wt}-{num_components_mut}_UMAP-components_grid_1.png"),
-                                dpi=300)
+            # fig.savefig(path.join(dir_results,
+            #                     "optimization",
+            #                     f"{tag_wt}-{tag_mut}-combined-{num_components_wt}-{num_components_mut}_UMAP-components_grid_1.png"),
+            #                     dpi=300)
             plt.close(fig)
 
         elif method.lower() == "pca":
             reducer = PCA(n_components=2, perplexity=40, random_state=42)
-            embedding = reducer.fit_transform(components_all)
+            embedding = reducer.fit_transform(self.decomposition)
             embedding_df = pd.DataFrame(embedding, columns=["C1", "C2"])
-            jl.dump(reducer, path.join(dest_folder, f"{tag}_{num_components}_TSNE-components_model.jl"))
+            jl.dump(reducer, path_to_save)
 
 
         # HDBSCAN parameters for the pooled components
@@ -451,12 +435,7 @@ class DecompositionResult:
             num_clusters = len(clusters_unique)     # noise is included as a cluster
 
 
-    
-    def consensus(self, method="jsd"):
-        """"""
-        return
-    
-
+    # TODO remove function after integration
     def umass_coherence(n_topics, topics, raw_data, n_top_words=10, random=False):
         """ Compute the umass coherence for a selected set of topics and raw data. The calculation is performed by selecting
         the top words of each topic. A default value of 10 words (or bins) is indicated.
@@ -492,6 +471,7 @@ class DecompositionResult:
         return coherence_umass
 
 
+    # TODO remove function after integration
     def npmi_coherence(n_topics, topics, raw_data, n_top_words=10, random=False):
         """ Compute coherence for a selected set of topics and raw data using two methods. The calculation is based on the
         normalized pointwise mutual information and is performed by selecting the top words of each topic. A default value
@@ -555,14 +535,13 @@ class DecompositionResult:
         return coherence_cos, coherence_npmi
 
 
-    def reconstruction(self):
-        return self.decomposition @ self.components
-
+    # TODO automatic extraction of threshold from a distribution, preferably multiple options
     @staticmethod
     def _extract_threshold(X):
         return X
 
+    # TODO
     def representativity(self, threshold=None):
         if threshold is None:
-            threshold = _extract_threshold(self.decomposition)
+            threshold = self._extract_threshold(self.decomposition)
         return np.mean(self.decomposition > threshold, axis=0)

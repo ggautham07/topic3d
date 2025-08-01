@@ -94,7 +94,7 @@ class CoordsArrayStack(np.ndarray):
     def center_of_mass(self) -> np.ndarray:
         """Compute the center of mass (CoM) of each array in the stack"""
 
-        return np.nanmean(self, axis=-2)
+        return np.nanmean(self, axis=1)
 
 
     def pwds(self):
@@ -108,15 +108,15 @@ class CoordsArrayStack(np.ndarray):
         return pwds
 
 
-    def bc_efficiency(self) -> np.ndarray:
-        """Compute barcode detection efficiency %"""
+    def efficiency(self, by="barcode") -> np.ndarray:
+        """Compute detection efficiency by barcode (default) or by item, i.e., trace using the by parameter"""
 
-        bc_effs = np.zeros((self.num_bc,))
-        for i in range(self.num_bc):
-            num_bc_detected = np.sum(~np.isnan(self[:, i, :]).any(axis=1))
-            bc_effs[i] = np.around(num_bc_detected * 100 / self.num_items, decimals=1)
+        assert isinstance(by, str) and by in ["barcode", "item", "trace"]
 
-        return bc_effs
+        is_detected = ~(np.isnan(self).any(axis=-1))   # gives (num_items x num_bc) bool matrix of detection
+        effs = np.around(np.mean(is_detected, axis=0 if by=="barcode" else 1) * 100, decimals=2)
+
+        return effs
     
 
     def filter(self, min_efficiency=0.1):
@@ -466,17 +466,18 @@ class PairwiseArrayStack(np.ndarray):
 
     # NOTE jb's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
     def proximity(self, threshold:Number, hardness=1, keep_NaNs=False):
-        """Compute hard or soft proximity using a threshold
-        
-        For hard proximity. Hardness describes sigmoid slope, 0 < hardness <= 1, where 1 means hard"""
+        """Compute proximity using a threshold
+
+        Hardness describes sigmoid slope, 0 < hardness <= 1, where 1 means hard.
+        Ideal value for softness visually appears to be 0.4. Values up to 0.2 may be too soft"""
 
         assert isinstance(threshold, Number)
         assert not ((self == 0) | (self == 1)).all()
         assert threshold <= np.nanmax(self)
         assert isinstance(hardness, Number) and 0 < hardness <= 1
 
-        if self.shape[0] == 1:
-            warnings.warn("Note: ensemble operation being performed on an array with only one item")
+        if hardness < 0.2:
+            warnings.warn("Input hardness value of {hardness} may be too soft, visualize maps")
         
         mode = "hard" if hardness == 1 else "soft"
 
@@ -504,10 +505,22 @@ class PairwiseArrayStack(np.ndarray):
         filtered dataset
         """
 
-        prop_bins_not_missing = np.mean(~np.isnan(self), axis=1)
-        idxs = np.argwhere(prop_bins_not_missing > min_efficiency)
+        proportion_bins_not_missing = np.mean(~np.isnan(self), axis=1)
+        idxs = np.argwhere(proportion_bins_not_missing > min_efficiency)
 
         return np.squeeze(self[idxs])
+    
+
+    def efficiency(self, by: str = "pixel"):
+        """Compute efficiency of detection by each pixel (*not* by bin) or by item/matrix
+        The former is used for plotting efficiency maps"""
+
+        assert isinstance(by, str) and by in ["pixel", "item", "matrix"]
+
+        is_detected = ~np.isnan(self)
+        effs = np.around(np.mean(is_detected, axis=0 if by=="pixel" else 1) * 100, decimals=2)
+
+        return effs
 
 
     def plot_pwds_avg(self, path_to_save: str,
@@ -525,6 +538,10 @@ class PairwiseArrayStack(np.ndarray):
             triangle or square representation (default: triangle)
         cmap : str
             colormap of the plot (default: Reds_r)
+        
+        Returns
+        -------
+        
         """
 
         assert isinstance(path_to_save, str)
@@ -553,6 +570,10 @@ class PairwiseArrayStack(np.ndarray):
             triangle or square representation (default: triangle)
         cmap : str
             colormap of the plot (default: Reds_r)
+
+        Returns
+        -------
+        
         """
 
         assert isinstance(path_to_save, str)
