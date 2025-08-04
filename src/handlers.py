@@ -21,7 +21,7 @@ import h5py
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import squareform, pdist
-import seaborn
+import seaborn as sns
 from sklearn.decomposition import LatentDirichletAllocation
 import matplotlib.pyplot as plt
 from itertools import combinations
@@ -91,6 +91,7 @@ class RawData:
             traces[j, barcodes] = coords[:]
         
         return traces
+
 
     # TODO path_to_file can also take a list of files with the same extension/format, and merge the data
     def load(self, path_to_file:str):
@@ -284,7 +285,7 @@ class ProcessedData:
         plt.tight_layout()
         return im
     
-    # TODO NOTE standardise use of seaborn for all plots to maintain consistency
+    # TODO NOTE standardise use of sns for all plots to maintain consistency
     def plot_3d_vs_genomic_dists():
         """Plot the 3D distance as a function of the genomic distance"""
 
@@ -518,6 +519,7 @@ class DecompositionResult:
                                                             randomize_data=False)
             return coherence_npmi_cos, coherence_umass
 
+
     # TODO t-SNE method, embedding plot with clusters needs to be saved, HDBSCAN parameter handling and model saving
     def embed_decomposition(self, path_to_save_dir: str, method: str = "UMAP", cluster: bool = False, **kwargs):
         """Embed the decomposition using Principal Component Analysis (PCA), UMAP, or t-SNE and cluster"""
@@ -527,6 +529,7 @@ class DecompositionResult:
         assert isinstance(cluster, bool)
 
         method = method.strip().lower()
+        method_label = method.upper()   # for labeling method in plots and DataFrame columns
 
         num_components_embedding = kwargs.get("num_components", 2)
 
@@ -545,7 +548,7 @@ class DecompositionResult:
                 assert isinstance(num_neighbors_embedding, int)
                 assert isinstance(min_dist_embedding, float)
             except KeyError:
-                print(f"Parameter values for {method.lower()} not found, supply using a dictionary")
+                print(f"Parameter values for {method} not found, supply using a dictionary")
                 raise
             except AssertionError:
                 print("Parameter values not suitable")
@@ -559,29 +562,29 @@ class DecompositionResult:
                 random_state=42,
             )
             embedding = reducer.fit_transform(self.decomposition)
-            # Prepare df for plotting
-            embedding_df = pd.DataFrame(embedding, columns=[f"UMAP_{i}" for i in range(1, num_components_embedding+1)])
 
         elif method == "pca":
-            reducer = PCA(n_components=2, perplexity=40, random_state=42)
+            reducer = PCA(n_components=2, random_state=42)
             embedding = reducer.fit_transform(self.decomposition)
-            embedding_df = pd.DataFrame(embedding, columns=[f"PC_{i}" for i in range(1, num_components_embedding+1)])
 
+        # Prepare df for plotting
+        embedding_df = pd.DataFrame(embedding, columns=[f"{method_label}_{i}" \
+                                                        for i in range(1, num_components_embedding+1)])
         # Saving the model as joblib file
-        jl.dump(reducer, path.join(path_to_save_dir, f"model_{method}.jl"))
+        jl.dump(reducer, path.join(path_to_save_dir, f"model_decomposition_{method}.jl"))
 
         # Plotting the results
         fig, ax = plt.subplots()
         fig.set_figwidth(8)
         fig.set_figheight(8)
-        seaborn.scatterplot(data=embedding_df,
-                x="UMAP_1", y="UMAP_2",
+        sns.scatterplot(data=embedding_df,
+                x=embedding_df.columns[0], y=embedding_df.columns[1],
                 s=10, alpha=0.4, color="#216eff", edgecolor="none",
                 legend=False,
                 ax=ax)
         ax.set_title(method)
         fig.tight_layout()
-        fig.savefig(path.join(path_to_save_dir, f"embedding_{method}.png"), dpi=300)
+        fig.savefig(path.join(path_to_save_dir, f"embedding_decomposition_{method}.png"), dpi=300)
         plt.close(fig)
         
         if cluster:
@@ -601,10 +604,41 @@ class DecompositionResult:
             clusterer = clusterer.fit(embedding)
             embedding_df["cluster"] = clusterer.labels_
 
-            # TODO plot embedding with clusters; can be copied from Bintu data analysis scripts
-            # clusters_unique = sorted(list(np.unique(clusterer.labels_).astype(int)))
-            # clusters_unique.append(clusters_unique.pop(0))
-            # clusters_unique = np.asarray(clusters_unique)
-            # num_clusters = len(clusters_unique)     # noise is included as a cluster
+            clusters_unique = sorted(list(np.unique(clusterer.labels_).astype(int)))
+            clusters_unique.append(clusters_unique.pop(0))
+            clusters_unique = np.asarray(clusters_unique)
+            num_clusters = len(clusters_unique)     # noise is included as a cluster
+
+            embedding_clusters_df = embedding_df[embedding_df["cluster"] != -1].copy()
+            embedding_noise_df = embedding_df[embedding_df["cluster"] == -1].copy()
+
+            palette = sns.color_palette("tab20", n_colors=num_clusters) \
+                if num_clusters <= 15 else sns.color_palette("hls", n_colors=num_clusters)
+            cluster_to_color = dict(zip(clusters_unique, palette))
+            plt.figure(figsize=(10, 8))
+            sns.scatterplot(
+            data=embedding_clusters_df,
+            x=embedding_df.columns[0], y=embedding_df.columns[1],
+            hue="cluster",
+            palette=cluster_to_color,
+            s=60,
+            legend=False
+            )
+            sns.scatterplot(
+                data=embedding_noise_df,
+                x=embedding_df.columns[0], y=embedding_df.columns[1],
+                color="gainsboro",
+                s=60,
+                label="Noise"
+            )
+            # Annotate cluster numbers
+            centroids = embedding_clusters_df.groupby("cluster")[[f"{method_label}_1", f"{method_label}_2"]].mean()
+            for cluster_id, row in centroids.iterrows():
+                plt.text(row[f"{method_label}_1"]+1, row[f"{method_label}_2"]+1, str(cluster_id),
+                        fontsize=10, weight='bold', ha='center', va='center', color='black',
+                        bbox=dict(facecolor='white', alpha=0.6, boxstyle='round,pad=0.3'))
+            plt.tight_layout()
+            plt.savefig(path.join(path_to_save_dir, f"embedding_decomposition_{method}_clustered.png"), dpi=300)
+            plt.close()
 
         return embedding_df

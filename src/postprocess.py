@@ -17,39 +17,63 @@ from os import path
 from scipy.linalg import issymmetric
 from itertools import combinations
 from scipy.spatial.distance import squareform, pdist, cdist
-import seaborn
+from scipy.cluster.hierarchy import linkage, fcluster
+import seaborn as sns
 from sklearn.decomposition import PCA
 import joblib as jl
+import visualization
 
 
-# TODO implementation using jsd and correlation (not recommended any more) or any other suitable methods
-def consensus(self, method="jsd"):
+# TODO implementation using jsd + linkage or any other suitable methods
+def consensus(components, max_deviation=0.2, min_cluster_size: int = None, return_clusters: bool = True):
     """Compute consensus representations of components merged by clustering of the latter pooled
     from several trainings using Jensen-Shannon divergence or Pearson's correlation
     """
 
-    return
+    # assert isinstance(method, str)
+    if min_cluster_size is None:
+        min_cluster_size = len(components) // 10
+
+    hierarchy = linkage(components, metric="jensenshannon", method="centroid", optimal_ordering=True)
+    clusters_init = fcluster(hierarchy, criterion="distance", t=max_deviation)
+    cluster_labels, counts = np.unique(clusters_init, return_counts=True)
+    cluster_labels_to_remove = cluster_labels[counts < min_cluster_size]
+    # replace cluster numbers below min size with NaN
+    clusters = np.where(clusters_init == cluster_labels_to_remove, np.nan, clusters_init)
+    cluster_labels = np.delete(cluster_labels, cluster_labels_to_remove)
+    components_avg = [np.mean(components[clusters == n_cluster], axis=0) \
+                      for n_cluster in cluster_labels]
+    # TODO plotting grid of traingular components
+    # visualization.plot_pyramid_topic(components_avg)
+    
+    if return_clusters:
+        return components_avg, clusters
+    return components_avg
 
 
-def compute_divergence_between_sets(clusters, components_by_cluster, path_to_save:str):
-    cluster_pairs = list(combinations(clusters, 2))
-    div = np.empty(len(cluster_pairs))
+def compute_divergence_between_sets(components_by_cluster: dict, path_to_save:str):
+    cluster_labels = list(components_by_cluster.keys())
+    cluster_pairs = list(combinations(cluster_labels, 2))
+    pw_mean_divergence = np.empty(len(cluster_pairs))
     for i, (c0, c1) in enumerate(cluster_pairs):
-        div[i] = np.mean(cdist(components_by_cluster[c0], components_by_cluster[c1], metric="jensenshannon"))
-    div = squareform(div)
-    np.fill_diagonal(div, [np.mean(pdist(components_by_cluster[cluster], metric="jensenshannon")) for cluster in clusters])
-    assert issymmetric(div)
+        pw_mean_divergence[i] = np.mean(cdist(components_by_cluster[c0],
+                                              components_by_cluster[c1],
+                                              metric="jensenshannon"))
+    pw_mean_divergence = squareform(pw_mean_divergence)
+    np.fill_diagonal(pw_mean_divergence, [np.mean(pdist(components_by_cluster[cluster], metric="jensenshannon")) \
+                           for cluster in cluster_labels])
+    assert issymmetric(pw_mean_divergence)
 
     fig, ax = plt.subplots()
     fig.set_figwidth(10)
     fig.set_figheight(8)
-    im = ax.imshow(div, cmap="Blues")
+    im = ax.imshow(pw_mean_divergence, cmap="Blues")
     cbar = fig.colorbar(im, shrink=0.85)
     cbar.set_label("mean Jensen-Shannon divergence", labelpad=6)
     ax.xaxis.tick_top()
     ax.xaxis.set_label_position("top")
-    ax.set_xticks(np.arange(len(clusters)), labels=clusters);
-    ax.set_yticks(np.arange(len(clusters)), labels=clusters);
+    ax.set_xticks(np.arange(len(cluster_labels)), labels=cluster_labels);
+    ax.set_yticks(np.arange(len(cluster_labels)), labels=cluster_labels);
     ax.tick_params("x", labelsize=10)
     ax.tick_params("y", labelsize=10)
     ax.set_xlabel("Cluster #", labelpad=10)
@@ -57,15 +81,23 @@ def compute_divergence_between_sets(clusters, components_by_cluster, path_to_sav
     plt.tight_layout()
     fig.savefig(path_to_save, dpi=300)
 
+    return pw_mean_divergence
 
-def embed_components(components, path_to_save_dir: str, method: str = "UMAP", cluster: bool = False, **kwargs):
+
+def embed_components(components, path_to_save_dir: str,
+                     method: str = "UMAP", cluster: bool = False,
+                     plot_representations: bool = False, **kwargs):
     """Embed components (usually pooled) using Principal Component Analysis (PCA), UMAP, or t-SNE and cluster them"""
 
     assert isinstance(path_to_save_dir, str) and path.isdir(path_to_save_dir)
     assert isinstance(method, str)
     assert isinstance(cluster, bool)
+    assert isinstance(plot_representations, bool)
+    if plot_representations:
+        assert cluster
 
     method = method.strip().lower()
+    method_label = method.upper()   # for labeling method in plots and DataFrame columns
 
     num_components_embedding = kwargs.get("num_components", 2)
 
@@ -84,7 +116,7 @@ def embed_components(components, path_to_save_dir: str, method: str = "UMAP", cl
             assert isinstance(num_neighbors_embedding, int)
             assert isinstance(min_dist_embedding, float)
         except KeyError:
-            print(f"Parameter values for {method.lower()} not found, supply using a dictionary")
+            print(f"Parameter values for {method} not found, supply using a dictionary")
             raise
         except AssertionError:
             print("Parameter values not suitable")
@@ -98,29 +130,29 @@ def embed_components(components, path_to_save_dir: str, method: str = "UMAP", cl
             random_state=42,
         )
         embedding = reducer.fit_transform(components)
-        # Prepare df for plotting
-        embedding_df = pd.DataFrame(embedding, columns=[f"UMAP_{i}" for i in range(1, num_components_embedding+1)])
 
     elif method == "pca":
-        reducer = PCA(n_components=2, perplexity=40, random_state=42)
+        reducer = PCA(n_components=2, random_state=42)
         embedding = reducer.fit_transform(components)
-        embedding_df = pd.DataFrame(embedding, columns=[f"PC_{i}" for i in range(1, num_components_embedding+1)])
-
+        
+    # for plotting with sns
+    embedding_df = pd.DataFrame(embedding, columns=[f"{method_label}_{i}" \
+                                                    for i in range(1, num_components_embedding+1)])
     # Saving the model as joblib file
-    jl.dump(reducer, path.join(path_to_save_dir, f"model_{method}.jl"))
+    jl.dump(reducer, path.join(path_to_save_dir, f"model_components_{method}.jl"))
 
     # Plotting the results
     fig, ax = plt.subplots()
     fig.set_figwidth(8)
     fig.set_figheight(8)
-    seaborn.scatterplot(data=embedding_df,
-            x="UMAP_1", y="UMAP_2",
+    sns.scatterplot(data=embedding_df,
+            x=embedding_df.columns[0], y=embedding_df.columns[1],
             s=10, alpha=0.4, color="#216eff", edgecolor="none",
             legend=False,
             ax=ax)
     ax.set_title(method)
     fig.tight_layout()
-    fig.savefig(path.join(path_to_save_dir, f"embedding_{method}.png"), dpi=300)
+    fig.savefig(path.join(path_to_save_dir, f"embedding_components_{method}.png"), dpi=300)
     plt.close(fig)
     
     if cluster:
@@ -140,17 +172,58 @@ def embed_components(components, path_to_save_dir: str, method: str = "UMAP", cl
         clusterer = clusterer.fit(embedding)
         embedding_df["cluster"] = clusterer.labels_
 
-        # TODO plot embedding with clusters; can be copied from Bintu data analysis scripts
-        # clusters_unique = sorted(list(np.unique(clusterer.labels_).astype(int)))
-        # clusters_unique.append(clusters_unique.pop(0))
-        # clusters_unique = np.asarray(clusters_unique)
-        # num_clusters = len(clusters_unique)     # noise is included as a cluster
+        clusters_unique = sorted(list(np.unique(clusterer.labels_).astype(int)))
+        clusters_unique.append(clusters_unique.pop(0))
+        clusters_unique = np.asarray(clusters_unique)
+        num_clusters = len(clusters_unique)     # noise is included as a cluster
+
+        embedding_clusters_df = embedding_df[embedding_df["cluster"] != -1].copy()
+        embedding_noise_df = embedding_df[embedding_df["cluster"] == -1].copy()
+
+        palette = sns.color_palette("tab20", n_colors=num_clusters) \
+            if num_clusters <= 15 else sns.color_palette("hls", n_colors=num_clusters)
+        cluster_to_color = dict(zip(clusters_unique, palette))
+        plt.figure(figsize=(10, 8))
+        sns.scatterplot(
+        data=embedding_clusters_df,
+        x=embedding_df.columns[0], y=embedding_df.columns[1],
+        hue="cluster",
+        palette=cluster_to_color,
+        s=60,
+        legend=False
+        )
+        sns.scatterplot(
+            data=embedding_noise_df,
+            x=embedding_df.columns[0], y=embedding_df.columns[1],
+            color="gainsboro",
+            s=60,
+            label="Noise"
+        )
+        # Annotate cluster numbers
+        centroids = embedding_clusters_df.groupby("cluster")[[f"{method_label}_1", f"{method_label}_2"]].mean()
+        for cluster_id, row in centroids.iterrows():
+            plt.text(row[f"{method_label}_1"]+1, row[f"{method_label}_2"]+1, str(cluster_id),
+                     fontsize=10, weight='bold', ha='center', va='center', color='black',
+                     bbox=dict(facecolor='white', alpha=0.6, boxstyle='round,pad=0.3'))
+        plt.tight_layout()
+        plt.savefig(path.join(path_to_save_dir, f"embedding_components_{method}_clustered.png"), dpi=300)
+        plt.close()
+
+        if plot_representations:
+            # for each cluster, plot the average topic associated
+            components_avg = np.zeros((num_clusters, components.shape[-1]))
+            for i, cluster in enumerate(clusters_unique):
+                idxs = np.squeeze(np.argwhere(clusterer.labels_ == cluster))
+                if len(idxs) > 0:
+                    components_avg[i,:] = np.nanmean(np.take(components, indices=idxs, axis=0), axis=0)
+            # TODO function to plot the averaged components in triangle to replace JB's older one
+            # plot_mean_topics(components_avg, clusters=clusters_unique, colormap="Reds", saving_filename=fig_path)
 
     return embedding_df
 
 
-
 # # TODO common set of functions for embedding which can be reused for optimization
+# # TODO finish code for optimization of UMAP and/or t-SNE embeddings
 # if method.lower().strip() == "umap":
 #     try:
 #         from umap import UMAP
