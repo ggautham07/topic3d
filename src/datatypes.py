@@ -30,44 +30,51 @@ import visualization
 
 
 class CoordsArrayStack(np.ndarray):
-
-    """
-    A stack of arrays of coordinates and some metadata, primarily used for the storage of traces from chromatin 
-    tracing experiments and coarse-grained polymer simulations
+    """ A stack of arrays of 3D coordinates and associated metadata. 
+    This class is primarily designed to handle collections of coordinate traces from chromatin tracing experiments 
+    or coarse-grained polymer simulations.
 
     Parameters
-    -------
-    a : numpy.ndarray
-        Numpy array
+    ----------
+    arr : np.ndarray
+        A 2D or 3D NumPy array where the last dimension must be 3 (x, y, z coordinates). 
+        Shape should be (N, M, 3) or (M, 3), where N is the number of traces and M is the number of barcodes.
+
+    Attributes
+    ----------
+    num_items : int
+        Number of traces in the stack.
+    num_bc : int
+        Number of barcodes (or points) per trace.
 
     Methods
     -------
-    pwds(filename)
-        Read a table from a file
-        
-    compute_bc_efficiency(column, order='ascending')
-        Compute bc efficiencies
-    
-
-    Returns
-    -------
-    m : ndarray, see dtype parameter above
-        If `out=None`, returns a new array containing the mean values,
-        otherwise a reference to the output array is returned.
-
-    See Also
-    -------
-    average : Weighted average
-    std, var, nanmean, nanstd, nanvar
-
-    Notes
-    -------
-    The arithmetic mean is the sum of the elements along the axis divided
-    by the number of elements.
-    """
+    center_of_mass()
+        Compute the center of mass (CoM) for each trace.
+    pwds()
+        Compute the pairwise distances within each trace.
+    efficiency(by='barcode')
+        Compute detection efficiency by barcode or by trace.
+    filter(min_efficiency=0.1)
+        Filter traces based on a minimum barcode detection efficiency.
+    impute(method='naive')
+        Impute missing coordinates using a naive or advanced probabilistic method.
+    """ 
 
     # Initializing using __new__ instead of __init__ in line with Numpy
     def __new__(cls, arr:np.ndarray):
+        """ Create a new instance of CoordsArrayStack from a NumPy array.
+
+        Parameters
+        ----------
+        arr : np.ndarray
+            Input array of shape (M, 3) or (N, M, 3), where M = number of barcodes and N = number of items/traces.
+
+        Returns
+        -------
+        CoordsArrayStack
+            A view of the array as a CoordsArrayStack instance.
+        """
 
         assert isinstance(arr, np.ndarray)
         assert arr.ndim == 2 or 3
@@ -86,19 +93,44 @@ class CoordsArrayStack(np.ndarray):
 
     # Since new attributes were added in __new__
     def __array_finalize__(self, obj):
+        """Finalize the array view, ensuring metadata is preserved."""
+
         # reset the attribute from passed original object
         self.num_items = getattr(obj, "num_items", None)
         self.num_bc = getattr(obj, "num_bc", None)
 
 
     def center_of_mass(self) -> np.ndarray:
-        """Compute the center of mass (CoM) of each array in the stack"""
+        """ Compute the center of mass for each trace.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (N, 3), where each row is the center of mass of a trace.
+
+        Examples
+        --------
+        >>> coords.center_of_mass()
+        array([[1.2, 2.3, 3.1],
+               [0.9, 1.1, 2.0], ...])
+        """
 
         return np.nanmean(self, axis=1)
 
 
     def pwds(self):
-        """Compute pairwise distances for each array in the stack"""
+        """ Compute the pairwise distances between all barcodes within each trace.
+
+        Returns
+        -------
+        PairwiseArrayStack
+            An array of shape (N, M*(M-1)//2), containing pairwise distances per trace.
+
+        Examples
+        --------
+        >>> coords.pwds()
+        array([[0.0, 1.4, 3.2, ...], [...], ...])
+        """
 
         pwds = np.empty((self.num_items, int((self.num_bc * (self.num_bc - 1)) / 2), ))
         for i in range(self.num_items):
@@ -109,7 +141,23 @@ class CoordsArrayStack(np.ndarray):
 
 
     def efficiency(self, by="barcode") -> np.ndarray:
-        """Compute detection efficiency by barcode (default) or by item, i.e., trace using the by parameter"""
+        """ Compute the detection efficiency of barcodes or traces.
+
+        Parameters
+        ----------
+        by : str, optional
+            Either "barcode" or "item"/"trace". Default is "barcode".
+
+        Returns
+        -------
+        np.ndarray
+            1D array of efficiencies as percentages (0–100), rounded to two decimals.
+
+        Examples
+        --------
+        >>> coords.efficiency(by="trace")
+        array([92.3, 100.0, 85.5, ...])
+        """
 
         assert isinstance(by, str) and by in ["barcode", "item", "trace"]
 
@@ -120,16 +168,23 @@ class CoordsArrayStack(np.ndarray):
     
 
     def filter(self, min_efficiency=0.1):
-        """ Filter the dataset by minimum fraction of total barcodes present in the trace. Filtered traces retain the
-        same total number of barcodes, i.e., coordinates are not removed, only traces
+        """ Filter out traces with low barcode detection efficiency.
 
         Parameters
-        -------
-        min_efficiency : minimum barcode detection efficiency
+        ----------
+        min_efficiency : float
+            Minimum fraction of barcodes that must be detected in a trace to keep it.
 
         Returns
         -------
-        filtered dataset
+        CoordsArrayStack
+            A new stack containing only the traces passing the filter.
+
+        Examples
+        --------
+        >>> filtered = coords.filter(min_efficiency=0.9)
+        >>> filtered.shape
+        (87, 30, 3)
         """
 
         num_bc_detected_by_item = np.sum(~np.isnan(self).any(axis=-1), axis=1)
@@ -139,19 +194,23 @@ class CoordsArrayStack(np.ndarray):
 
 
     def impute(self, method="naive"):
-        """ Impute missing barcode coordinates (detected by a NaN) with the mean position of the neighboring barcodes. 
-        Barcode coordinates at either end of the trace cannot be imputed with the naive method.
+        """ Impute missing coordinates in traces using the specified method.
 
         Parameters
-        -------
+        ----------
         method : str
-            naive for neighbor mean imputation
-            jost for Daniel Jost's method using conditional multivariate normal distributions for the coordinates
+            Either "naive" (neighbor averaging) or "jost" (Gaussian inference via pairwise distances).
 
         Returns
         -------
-        stack_imputed : CoordsArrayStack
-            imputed stack
+        CoordsArrayStack
+            New stack with missing values imputed.
+
+        Examples
+        --------
+        >>> imputed = coords.impute(method="naive")
+        >>> imputed.shape
+        (100, 30, 3)
         """
 
         method = method.lower()
@@ -229,9 +288,70 @@ class CoordsArrayStack(np.ndarray):
 
 
 class PairwiseArrayStack(np.ndarray):
+    """ A stack of pairwise distance vectors (1D) with utilities for covariance inference,
+    matrix regularization, and visualization. Used to represent and process collections of intra-trace 
+    pairwise distances in chromatin tracing or polymer modeling.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        A 1D or 2D array where each vector represents the pairwise distances (flattened) of a trace.
+        Must correspond to the binomial coefficient (n choose 2) for some integer n ≥ 2.
+
+    Attributes
+    ----------
+    num_items : int
+        Number of traces (1 if input was 1D).
+    num_bc : int
+        Number of barcodes (points) per trace, inferred from vector length.
+
+    Methods
+    -------
+    ensemble(method='mean', regularize=False)
+        Perform ensemble operation across the stack (mean, median, etc.).
+    proximity(threshold, hardness=1, keep_NaNs=False)
+        Compute proximity from distances using a threshold and hardness.
+    filter(min_efficiency=0.1)
+        Filter items based on missing data.
+    efficiency(by='pixel')
+        Compute detection efficiency by pixel or by item.
+    plot_pwds_avg(path_to_save, method='mean', form='triangle', cmap='Reds_r')
+        Plot ensemble-average pairwise distance matrix.
+    plot_proximity_avg(path_to_save, threshold, hardness=1, form='triangle', cmap='Reds')
+        Plot ensemble-average proximity matrix.
+
+    Static Methods
+    --------------
+    _make_pairwise_square_matrix_symmetric(matrix)
+        Symmetrize a square matrix.
+    _cov_from_D2_matrix(matrix)
+        Infer covariance matrix from mean-squared distances.
+    _D2_matrix_from_cov(cov)
+        Compute mean-squared distances from covariance.
+    _normalize_minmax(arr)
+        Normalize values in array to [0, 1].
+    _rescale_minmax(arr, ref)
+        Rescale arr to the range of reference array ref.
+    _regularize_pairwise_square_matrix(matrix, hack=False)
+        Make a matrix positive definite by eigenvalue correction.
+    _reorganize_pairwise_square_matrix(matrix, idxs)
+        Reorder rows/columns of matrix based on index list.
+    """
 
     # Initializing using __new__ instead of __init__ in line with Numpy
     def __new__(cls, arr:np.ndarray):
+        """ Create a new PairwiseArrayStack instance from a distance matrix or vector.
+
+        Parameters
+        ----------
+        arr : np.ndarray
+            Input array of shape (N, K) or (K,), where K = n*(n-1)//2 for some n.
+
+        Returns
+        -------
+        PairwiseArrayStack
+            The input viewed as a PairwiseArrayStack with inferred metadata.
+        """
         assert isinstance(arr, np.ndarray)
         assert arr.ndim == 1 or 2
     
@@ -261,19 +381,17 @@ class PairwiseArrayStack(np.ndarray):
 
     @staticmethod
     def _make_pairwise_square_matrix_symmetric(matrix:np.ndarray) -> np.ndarray:
-        """ Build a symmetric version of the input matrix.
-        If the lower triangle matrix is filled with zeros, the upper triangle matrix is copied to the lower whilst
-        retaining the original diagonal elements.
-        Otherwise, it adds the matrix to its transpose and divides the resultant matrix by two.
-        
+        """ Ensure the matrix is symmetric by copying upper triangle to lower (or averaging).
+
         Parameters
-        -------
-        matrix : numpy.ndarray
-            two-dimensional square array
+        ----------
+        matrix : np.ndarray
+            Square matrix.
 
         Returns
         -------
-        a symmetric matrix
+        np.ndarray
+            Symmetric matrix.
         """
 
         assert matrix.ndim == 2
@@ -286,17 +404,17 @@ class PairwiseArrayStack(np.ndarray):
 
     @staticmethod
     def _cov_from_D2_matrix(matrix:np.ndarray) -> np.ndarray:
-        """ Compute the covariance matrix from a symmetric mean-squared distance matrix assuming a Gaussian distribution
-        
+        """ Compute covariance matrix from mean-squared distance matrix assuming a Gaussian distribution.
+
         Parameters
-        -------
-        matrix : numpy.ndarray 
-            two-dimensional square symmetric array
+        ----------
+        matrix : np.ndarray
+            Symmetric distance² matrix.
 
         Returns
         -------
-        cov : numpy.ndarray
-            covariance matrix computed using Daniel Jost's method
+        np.ndarray
+            Covariance matrix.
         """
 
         assert matrix.ndim == 2
@@ -315,18 +433,17 @@ class PairwiseArrayStack(np.ndarray):
 
     @staticmethod
     def _D2_matrix_from_cov(cov:np.ndarray) -> np.ndarray:
-        """ Construct a symmetric mean-squared distance matrix from a given covariance matrix assuming a 
-        Gaussian distribution
-        
+        """ Compute mean-squared distance matrix from covariance matrix assuming a Gaussian distribution.
+
         Parameters
         ----------
-        cov : numpy.ndarray
-            two-dimensional square symmetric covariance array
-        
+        cov : np.ndarray
+            Covariance matrix.
+
         Returns
-        ----------
-        mean2 : numpy.ndarray
-            mean-squared distance matrix computed from `cov`
+        -------
+        np.ndarray
+            Symmetric mean-squared distance matrix.
         """
 
         assert cov.ndim == 2
@@ -347,15 +464,17 @@ class PairwiseArrayStack(np.ndarray):
     # TODO rewrite as method applied to both self and numpy.ndarrays
     @staticmethod
     def _normalize_minmax(arr:np.ndarray) -> np.ndarray:
-        """ Normalize the values of an array to the range of [0, 1] using Min-Max Normalization
-        
+        """ Normalize array values to [0, 1] using min-max normalization.
+
         Parameters
-        -------
-        arr : an array
+        ----------
+        arr : np.ndarray
+            Input array.
 
         Returns
         -------
-        arr_rescaled : rescaled input array
+        np.ndarray
+            Normalized array.
         """
 
         arr_min = np.min(arr)
@@ -367,17 +486,19 @@ class PairwiseArrayStack(np.ndarray):
     # TODO rewrite as method applied to both self and numpy.ndarrays
     @staticmethod
     def _rescale_minmax(arr:np.ndarray, ref:np.ndarray) -> np.ndarray:
+        """ Rescale arr to the range of ref using min-max normalization.
 
-        """
-        Rescale the values of an array `arr` to the range of another array `ref` using Min-Max Normalization
-        
         Parameters
-        -------
-        arr, ref : two arrays
+        ----------
+        arr : np.ndarray
+            Array to rescale.
+        ref : np.ndarray
+            Reference array to match range.
 
         Returns
         -------
-        arr_rescaled : rescaled input array
+        np.ndarray
+            Rescaled array.
         """
         
         assert np.logical_not(np.isnan(arr).all())
@@ -393,16 +514,19 @@ class PairwiseArrayStack(np.ndarray):
 
     @staticmethod
     def _regularize_pairwise_square_matrix(matrix:np.ndarray, hack=False) -> np.ndarray:
-        """ Regularize the given matrix to make it positive-definite, i.e., having no negative eigenvalues
-        
+        """ Make matrix positive definite by adjusting negative eigenvalues.
+
         Parameters
-        -------
-        matrix : two-dimensional square array\n
-        hack : if `True`, the lowest positive eigenvalue will be replaced by a small positive value
+        ----------
+        matrix : np.ndarray
+            Square matrix.
+        hack : bool
+            If True, forces smallest positive eigenvalue to small constant.
 
         Returns
         -------
-        matrix_reg : regularised matrix
+        np.ndarray
+            Regularized matrix.
         """
 
         assert matrix.ndim == 2
@@ -422,16 +546,19 @@ class PairwiseArrayStack(np.ndarray):
     # TODO finish the vectorised implementation for a 3D stack (now 2D matrix)
     @staticmethod
     def _reorganize_pairwise_square_matrix(matrix:np.ndarray, idxs) -> np.ndarray:      
-        """ Reorganize a symmetric matrix with new positions for the previous indices
+        """ Reorder a matrix using a new set of indices.
 
         Parameters
-        -------
-        matrix : two-dimensional symmetric array
-        idxs : indices using which `matrix` will be reorganised
+        ----------
+        matrix : np.ndarray
+            Symmetric matrix to reorder.
+        idxs : array-like
+            New ordering of indices.
 
         Returns
         -------
-        Reorganized matrix based on the new order of original indices
+        np.ndarray
+            Reordered matrix.
         """
 
         assert matrix.ndim == 2
@@ -443,11 +570,19 @@ class PairwiseArrayStack(np.ndarray):
 
 
     def ensemble(self, method="mean", regularize=False) -> np.ndarray:
-        """Perform ensemble operations on the stack accounting for NaNs
-        
-        different methods: mean, median, std, sum, max, min
+        """ Compute an ensemble operation (mean, median, etc.) across the stack.
 
-        regularize to make the matrix positive definite (no negative eigenvalues)
+        Parameters
+        ----------
+        method : str
+            One of 'mean', 'median', 'std', 'sum', 'max', 'min'.
+        regularize : bool
+            Whether to regularize the resulting matrix.
+
+        Returns
+        -------
+        np.ndarray
+            Ensemble average vector.
         """
 
         methods = {"mean": np.nanmean, "median": np.nanmedian, "std": np.nanstd,
@@ -466,10 +601,26 @@ class PairwiseArrayStack(np.ndarray):
 
     # NOTE jb's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
     def proximity(self, threshold:Number, hardness=1, keep_NaNs=False):
-        """Compute proximity using a threshold
+        """
+        Convert distances into proximity values using a sigmoid function or hard threshold.
 
         Hardness describes sigmoid slope, 0 < hardness <= 1, where 1 means hard.
-        Ideal value for softness visually appears to be 0.4. Values up to 0.2 may be too soft"""
+        Ideal value for softness visually appears to be 0.4. Values up to 0.2 may be too soft
+
+        Parameters
+        ----------
+        threshold : float
+            Distance cutoff.
+        hardness : float
+            Controls sigmoid slope. 1 is hard threshold; lower is softer.
+        keep_NaNs : bool
+            Whether to retain NaNs.
+
+        Returns
+        -------
+        np.ndarray
+            Proximity values in [0, 1].
+        """
 
         assert isinstance(threshold, Number)
         assert not ((self == 0) | (self == 1)).all()
@@ -494,15 +645,17 @@ class PairwiseArrayStack(np.ndarray):
 
     # TODO verify that the function works correctly
     def filter(self, min_efficiency: Number = 0.1) -> np.ndarray:
-        """ Filter the dataset by minimum number of barcodes present
+        """ Filter matrices with insufficient barcode detection.
 
         Parameters
-        -------
-        min_efficiency : minimum barcode detection efficiency
+        ----------
+        min_efficiency : float
+            Minimum proportion of non-NaN values to retain a matrix.
 
         Returns
         -------
-        filtered dataset
+        np.ndarray
+            Filtered subset of the stack.
         """
 
         proportion_bins_not_missing = np.mean(~np.isnan(self), axis=1)
@@ -512,8 +665,18 @@ class PairwiseArrayStack(np.ndarray):
     
 
     def efficiency(self, by: str = "pixel"):
-        """Compute efficiency of detection by each pixel (*not* by bin) or by item/matrix
-        The former is used for plotting efficiency maps"""
+        """ Compute detection efficiency by pixel or item.
+
+        Parameters
+        ----------
+        by : str
+            "pixel" for per-bin efficiency, "item" for whole matrices.
+
+        Returns
+        -------
+        np.ndarray
+            Efficiencies in percent (0–100).
+        """
 
         assert isinstance(by, str) and by in ["pixel", "item", "matrix"]
 
@@ -526,22 +689,27 @@ class PairwiseArrayStack(np.ndarray):
     def plot_pwds_avg(self, path_to_save: str,
                       method: str = "mean",
                       form: str = "triangle", cmap: str = "Reds_r"):
-        """ Plot the ensemble-average pairwise distance matrix
-        
+        """ Plot the ensemble-averaged pairwise distance matrix across the stack.
+
         Parameters
-        -------
+        ----------
         path_to_save : str
-            path to save the figure, format is taken automatically from the extension
-        method : str
-            mean or median (default: mean)
-        form : str
-            triangle or square representation (default: triangle)
-        cmap : str
-            colormap of the plot (default: Reds_r)
-        
+            Path (with file extension) where the figure will be saved.
+        method : str, default="mean"
+            Aggregation method to compute ensemble average. Supported values: "mean", "median".
+        form : str, default="triangle"
+            Format of the plot: "triangle" for lower triangle heatmap, or "square" for full matrix heatmap.
+        cmap : str, default="Reds_r"
+            Matplotlib colormap to use for the plot.
+
         Returns
         -------
-        
+        None
+            Saves the plot to the specified file path.
+
+        Examples
+        --------
+        >>> stack.plot_pwds_avg("figs/avg_pwds.svg", method="mean", form="square", cmap="viridis")
         """
 
         assert isinstance(path_to_save, str)
@@ -560,22 +728,34 @@ class PairwiseArrayStack(np.ndarray):
     def plot_proximity_avg(self, path_to_save: str,
                            threshold: Number, hardness: Number = 1,
                            form: str = "triangle", cmap: str = "Reds"):
-        """ Plot the ensemble-average proximity matrix
-        
+        """ Plot the ensemble-averaged proximity matrix based on a distance threshold.
+
+        Proximity values are computed using a sigmoidal transformation or hard thresholding, then averaged
+        across all items in the stack.
+
         Parameters
-        -------
+        ----------
         path_to_save : str
-            path to save the figure, format is taken automatically from the extension
-        form : str
-            triangle or square representation (default: triangle)
-        cmap : str
-            colormap of the plot (default: Reds_r)
+            Path (with file extension) where the figure will be saved.
+        threshold : float
+            Distance threshold used to compute proximity.
+        hardness : float, default=1
+            Controls the slope of the sigmoid used for soft thresholding. 1 = hard threshold.
+        form : str, default="triangle"
+            Format of the plot: "triangle" for lower triangle heatmap, or "square" for full matrix heatmap.
+        cmap : str, default="Reds"
+            Matplotlib colormap to use for the plot.
 
         Returns
         -------
-        
-        """
+        None
+            Saves the plot to the specified file path.
 
+        Examples
+        --------
+        >>> stack.plot_proximity_avg("figs/avg_proximity.svg", threshold=0.4, hardness=0.5, form="triangle", cmap="coolwarm")
+        """
+        
         assert isinstance(path_to_save, str)
         assert form in ["triangle", "square"]
 

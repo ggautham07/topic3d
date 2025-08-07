@@ -24,50 +24,112 @@ import joblib as jl
 import visualization
 
 
-# TODO implementation using jsd + linkage or any other suitable methods
-def consensus(components, max_deviation=0.2, min_cluster_size: int = None, return_clusters: bool = True):
-    """Compute consensus representations of components merged by clustering of the latter pooled
-    from several trainings using Jensen-Shannon divergence or Pearson's correlation
+def consensus(components:np.ndarray, 
+              max_deviation: float = 0.33, min_cluster_size: int = None,
+              return_hierarchy: bool = False, return_clusters: bool = True):
+    """ Compute consensus representations of a set of components by computing the Jensen-Shannon divergence
+    between them and clustering hierarchically. Components from undersized clusters are discarded.
+
+    Parameters
+    ----------
+    components : np.ndarray
+        2D array of shape (n_components, n_features) representing individual components.
+    max_deviation : float, default=0.33
+        Maximum allowed linkage distance (Jensen-Shannon divergence) for flat clustering.
+    min_cluster_size : int, optional
+        Minimum number of components per cluster to be retained. Defaults to n_components // 50.
+    return_hierarchy : bool, default=False
+        Whether to return the full linkage matrix.
+    return_clusters : bool, default=True
+        Whether to return the cluster labels of individual components.
+
+    Returns
+    -------
+    components_avg : list of np.ndarray
+        Consensus components (cluster means) for each retained cluster.
+    hierarchy : np.ndarray, optional
+        Linkage matrix from hierarchical clustering (if return_hierarchy is True).
+    clusters : np.ndarray, optional
+        Cluster labels for each component, with -1 for discarded ones (if return_clusters is True).
+
+    Examples
+    --------
+    >>> avg, linkage_matrix, cluster_labels = consensus(components, return_hierarchy=True)
+    >>> len(avg)
+    12  # number of consensus components retained
     """
 
-    # assert isinstance(method, str)
+    assert isinstance(components, np.ndarray)
+    assert isinstance(max_deviation, float)
+    assert isinstance(min_cluster_size, int)
     if min_cluster_size is None:
-        min_cluster_size = len(components) // 10
-
-    hierarchy = linkage(components, metric="jensenshannon", method="centroid", optimal_ordering=True)
-    clusters_init = fcluster(hierarchy, criterion="distance", t=max_deviation)
-    cluster_labels, counts = np.unique(clusters_init, return_counts=True)
-    cluster_labels_to_remove = cluster_labels[counts < min_cluster_size]
-    # replace cluster numbers below min size with NaN
-    clusters = np.where(clusters_init == cluster_labels_to_remove, np.nan, clusters_init)
-    cluster_labels = np.delete(cluster_labels, cluster_labels_to_remove)
-    components_avg = [np.mean(components[clusters == n_cluster], axis=0) \
-                      for n_cluster in cluster_labels]
-    # TODO plotting grid of traingular components
-    # visualization.plot_pyramid_topic(components_avg)
+        min_cluster_size = len(components) // 50
     
+    # Build hierarchy and extract flat clusters
+    hierarchy = linkage(components, metric="jensenshannon", method="average", optimal_ordering=True)
+    clusters = fcluster(hierarchy, criterion="distance", t=max_deviation)  # TODO change max_deviation to dg height
+    
+    # Filter the resultant clusters by minimum cluster size
+    clabels, cfreqs = np.unique(clusters, return_counts=True)
+    clabels_to_remove = clabels[cfreqs < min_cluster_size]
+    for i in range(len(clabels_to_remove)):
+        clusters[clusters == clabels_to_remove[i]] = -1
+    clabels, cfreqs = np.unique(clusters, return_counts=True)
+    print({l:v for l, v in zip(clabels, cfreqs)})
+    
+    # Compute and plot the consensus component representation
+    components_avg = [np.mean(components[clusters == c], axis=0) \
+                      for c in clabels[1:]]
+    # TODO plotting grid of triangular components
+    # visualization.plot_pyramid_topic(components_avg)
+
+    result = [components_avg]
+    if return_hierarchy:
+        result.append(hierarchy)
     if return_clusters:
-        return components_avg, clusters
-    return components_avg
+        result.append(clusters)
+    return tuple(result)
 
 
 def compute_divergence_between_sets(components_by_cluster: dict, path_to_save:str):
+    """ Compute and visualize the average pairwise Jensen-Shannon divergence between component sets 
+    from different clusters.
+
+    Parameters
+    ----------
+    components_by_cluster : dict
+        Dictionary mapping cluster labels (str or int) to arrays of components (shape: n_items × n_features).
+    path_to_save : str
+        File path to save the resulting heatmap image (e.g., "output/divergence_heatmap.png").
+
+    Returns
+    -------
+    pw_mean_div : np.ndarray
+        Symmetric matrix of pairwise mean Jensen-Shannon divergences between component sets.
+
+    Examples
+    --------
+    >>> divergence_matrix = compute_divergence_between_sets(components_by_cluster, "output/js_divergence.png")
+    >>> divergence_matrix.shape
+    (5, 5)
+    """
+    
     cluster_labels = list(components_by_cluster.keys())
     cluster_pairs = list(combinations(cluster_labels, 2))
-    pw_mean_divergence = np.empty(len(cluster_pairs))
+    pw_mean_div = np.empty(len(cluster_pairs))
     for i, (c0, c1) in enumerate(cluster_pairs):
-        pw_mean_divergence[i] = np.mean(cdist(components_by_cluster[c0],
+        pw_mean_div[i] = np.mean(cdist(components_by_cluster[c0],
                                               components_by_cluster[c1],
                                               metric="jensenshannon"))
-    pw_mean_divergence = squareform(pw_mean_divergence)
-    np.fill_diagonal(pw_mean_divergence, [np.mean(pdist(components_by_cluster[cluster], metric="jensenshannon")) \
+    pw_mean_div = squareform(pw_mean_div)
+    np.fill_diagonal(pw_mean_div, [np.mean(pdist(components_by_cluster[cluster], metric="jensenshannon")) \
                            for cluster in cluster_labels])
-    assert issymmetric(pw_mean_divergence)
+    assert issymmetric(pw_mean_div)
 
     fig, ax = plt.subplots()
     fig.set_figwidth(10)
     fig.set_figheight(8)
-    im = ax.imshow(pw_mean_divergence, cmap="Blues")
+    im = ax.imshow(pw_mean_div, cmap="Blues")
     cbar = fig.colorbar(im, shrink=0.85)
     cbar.set_label("mean Jensen-Shannon divergence", labelpad=6)
     ax.xaxis.tick_top()
@@ -81,13 +143,55 @@ def compute_divergence_between_sets(components_by_cluster: dict, path_to_save:st
     plt.tight_layout()
     fig.savefig(path_to_save, dpi=300)
 
-    return pw_mean_divergence
+    return pw_mean_div
 
 
 def embed_components(components, path_to_save_dir: str,
                      method: str = "UMAP", cluster: bool = False,
                      plot_representations: bool = False, **kwargs):
-    """Embed components (usually pooled) using Principal Component Analysis (PCA), UMAP, or t-SNE and cluster them"""
+    """ Embed high-dimensional component vectors into 2D using PCA or UMAP, optionally cluster them, 
+    and visualize the results. Clustering uses HDBSCAN if enabled.
+
+    Parameters
+    ----------
+    components : np.ndarray
+        Input array of shape (n_components, n_features) to embed.
+    path_to_save_dir : str
+        Directory path to save figures and model files.
+    method : str, default="UMAP"
+        Dimensionality reduction method to use. Options: "UMAP", "PCA".
+    cluster : bool, default=False
+        Whether to perform clustering on the embedded data using HDBSCAN.
+    plot_representations : bool, default=False
+        Whether to plot averaged representations for each cluster (requires cluster=True).
+    **kwargs : dict
+        Additional parameters:
+        - For UMAP:
+            - num_neighbors : int
+            - min_dist : float
+            - metric : str, default="cosine"
+        - For clustering:
+            - min_cluster_size : int, optional
+            - min_samples : int, optional
+            - cluster_selection_method : str, optional
+            - alpha : float, optional
+        - num_components : int, optional
+            Number of embedding dimensions (default=2).
+
+    Returns
+    -------
+    embedding_df : pd.DataFrame
+        DataFrame containing the 2D embedding and optional cluster assignments.
+
+    Examples
+    --------
+    >>> embed_df = embed_components(components, "results/", method="UMAP", cluster=True,
+    ...                             num_neighbors=15, min_dist=0.1, min_cluster_size=10)
+    >>> embed_df.head()
+         UMAP_1   UMAP_2  cluster
+    0    -0.23     0.57         2
+    1     0.42     0.91         2
+    """
 
     assert isinstance(path_to_save_dir, str) and path.isdir(path_to_save_dir)
     assert isinstance(method, str)
