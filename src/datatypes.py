@@ -605,7 +605,7 @@ class PairwiseArrayStack(np.ndarray):
         Convert distances into proximity values using a sigmoid function or hard threshold.
 
         Hardness describes sigmoid slope, 0 < hardness <= 1, where 1 means hard.
-        Ideal value for softness visually appears to be 0.4. Values up to 0.2 may be too soft
+        Ideal value for softness visually appears to be 0.4. Values up to 0.2 may be too soft.
 
         Parameters
         ----------
@@ -628,7 +628,7 @@ class PairwiseArrayStack(np.ndarray):
         assert isinstance(hardness, Number) and 0 < hardness <= 1
 
         if hardness < 0.2:
-            warnings.warn("Input hardness value of {hardness} may be too soft, visualize maps")
+            warnings.warn(f"Input hardness value of {hardness} may be too soft")
         
         mode = "hard" if hardness == 1 else "soft"
 

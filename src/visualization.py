@@ -26,7 +26,7 @@ from PIL import Image
 
 
 def _plot_2d_triangle(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" "):
-    """Plot a 2D matrix as a triangular matrix with a colorbar
+    """ Plot a 2D matrix as a triangular matrix with a colorbar
     
     Parameters
     --------
@@ -81,7 +81,7 @@ def _plot_2d_triangle(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" 
 
 
 def _plot_2d_square(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" "):
-    """Plot a 2D matrix as a square symmetric matrix with a colorbar
+    """ Plot a 2D matrix as a square symmetric matrix with a colorbar
     
     Parameters
     --------

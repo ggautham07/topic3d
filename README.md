@@ -2,6 +2,9 @@
 
 Python package for the decomposition and analysis of chromatin tracing data using topic modeling
 
+> [!NOTE]
+> This project is under active development, so the API will change frequently.
+
 
 ## Brief description
 
