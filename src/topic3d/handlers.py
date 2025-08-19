@@ -28,7 +28,7 @@ from itertools import combinations
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import joblib as jl
-from datatypes import CoordsArrayStack, PairwiseArrayStack
+from .datatypes import CoordsArrayStack, PairwiseArrayStack
 
 
 
@@ -38,7 +38,8 @@ from datatypes import CoordsArrayStack, PairwiseArrayStack
 
 
 class RawData:
-    """ Data handler for raw data file types: .npy, .csv for Fish Omics Format (FOF) are accepted
+    """
+    Data handler for raw data file types: .npy, .csv for Fish Omics Format (FOF) are accepted
     
     Create an instance of the object and use the method `load(path_to_file:str)` to load the data
     
@@ -71,7 +72,9 @@ class RawData:
 
     @staticmethod
     def _extract_header_row_from_fof(full_seq:str, sub_seq:str) -> list:
-        """ Internal function used to extract header rows from Fish Omics Format (FOF) data
+        """
+        Internal function used to extract header rows from Fish Omics Format (FOF) data
+        
         Finds the first occurrence of sub_seq in full_seq and splits it at the first newline
         """
 
@@ -79,7 +82,7 @@ class RawData:
     
 
     def _extract_traces_from_fof(self):
-        """Extract traces from FOF-CT Dataframe"""
+        """Extract traces from a FOF-CT Dataframe"""
 
         traces = np.empty((self.num_traces, self.num_bc, 3))
         traces[:] = np.nan

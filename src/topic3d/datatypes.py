@@ -20,7 +20,7 @@ import pandas as pd
 from scipy.spatial.distance import squareform, pdist
 from scipy.linalg import issymmetric
 import warnings
-import visualization
+from . import visualization
 
 
 
@@ -30,7 +30,8 @@ import visualization
 
 
 class CoordsArrayStack(np.ndarray):
-    """ A stack of arrays of 3D coordinates and associated metadata. 
+    """
+    A stack of arrays of 3D coordinates and associated metadata. 
     This class is primarily designed to handle collections of coordinate traces from chromatin tracing experiments 
     or coarse-grained polymer simulations.
 
@@ -63,7 +64,8 @@ class CoordsArrayStack(np.ndarray):
 
     # Initializing using __new__ instead of __init__ in line with Numpy
     def __new__(cls, arr:np.ndarray):
-        """ Create a new instance of CoordsArrayStack from a NumPy array.
+        """
+        Create a new instance of CoordsArrayStack from a NumPy array.
 
         Parameters
         ----------
@@ -100,8 +102,14 @@ class CoordsArrayStack(np.ndarray):
         self.num_bc = getattr(obj, "num_bc", None)
 
 
+    # def __str__(self):
+    #     out = f"CoordsArrayStack\nNo of barcodes: {self.num_bc}\nNo of items: {self.num_items}"
+    #     return out
+
+
     def center_of_mass(self) -> np.ndarray:
-        """ Compute the center of mass for each trace.
+        """
+        Compute the center of mass for each trace.
 
         Returns
         -------
@@ -119,7 +127,8 @@ class CoordsArrayStack(np.ndarray):
 
 
     def pwds(self):
-        """ Compute the pairwise distances between all barcodes within each trace.
+        """
+        Compute the pairwise distances between all barcodes within each trace.
 
         Returns
         -------
@@ -140,8 +149,9 @@ class CoordsArrayStack(np.ndarray):
         return pwds
 
 
-    def efficiency(self, by="barcode") -> np.ndarray:
-        """ Compute the detection efficiency of barcodes or traces.
+    def efficiency(self, by: str = "item") -> np.ndarray:
+        """
+        Compute the detection efficiency of barcodes or traces.
 
         Parameters
         ----------
@@ -167,13 +177,14 @@ class CoordsArrayStack(np.ndarray):
         return effs
     
 
-    def filter(self, min_efficiency=0.1):
-        """ Filter out traces with low barcode detection efficiency.
+    def filter(self, min_efficiency=60, by="item"):
+        """
+        Filter out traces with low barcode detection efficiency.
 
         Parameters
         ----------
         min_efficiency : float
-            Minimum fraction of barcodes that must be detected in a trace to keep it.
+            Minimum percentage of barcodes that must be detected in a trace to keep it.
 
         Returns
         -------
@@ -187,14 +198,15 @@ class CoordsArrayStack(np.ndarray):
         (87, 30, 3)
         """
 
-        num_bc_detected_by_item = np.sum(~np.isnan(self).any(axis=-1), axis=1)
-        idxs = np.argwhere(num_bc_detected_by_item >= int(min_efficiency * self.num_bc))
+        effs = self.efficiency(by=by)
+        idxs = np.argwhere(effs >= min_efficiency)
 
-        return CoordsArrayStack(np.squeeze(self[idxs]))
+        return CoordsArrayStack(np.squeeze(self[:, idxs]) if by=="barcode" else np.squeeze(self[idxs]))
 
 
     def impute(self, method="naive"):
-        """ Impute missing coordinates in traces using the specified method.
+        """
+        Impute missing coordinates in traces using the specified method.
 
         Parameters
         ----------
@@ -216,24 +228,26 @@ class CoordsArrayStack(np.ndarray):
         method = method.lower()
         assert method in ["naive", "jost"]
 
-        if ~np.all(np.isnan(self)):
+        if np.all(~np.isnan(self)):
             warnings.warn("No NaNs to impute in the stack")
             return self
         
+        stack_imputed = np.copy(self)
+        
         if method == "naive":
             neighbor_means = (self[:, 2:] + self[:, :-2]) / 2   # compute the mean pos of all potential neighbors
-            stack_imputed = self[:]
             is_missing = np.isnan(stack_imputed[:, 1:-1])   # check missing coordinates
             stack_imputed[:, 1:-1][is_missing] = neighbor_means[np.where(is_missing)]   # replace NaNs with mean pos
 
         elif method == "jost":
-            stack_imputed = self[:]
+            # needs the mean-squared pairwise distance matrix, regularized
+            pwds_mean2 = squareform(self.pwds().ensemble(method="mean") ** 2)
+            pwds_mean2 = PairwiseArrayStack._regularize_pairwise_square_matrix(pwds_mean2)
+            assert pwds_mean2.ndim == 2
             for n in range(self.num_items):
                 tr = stack_imputed[n][:]
-                mean2 = pdist(tr) ** 2
-                assert mean2.ndim == 2
                 assert tr.shape[-1] == 3
-                assert mean2.shape[0] == self.num_bc
+                assert pwds_mean2.shape[0] == self.num_bc
                 # missing positions
                 missing_pos_bool = np.isnan(tr[:,0])
                 available_pos_bool = np.logical_not(missing_pos_bool)
@@ -249,7 +263,7 @@ class CoordsArrayStack(np.ndarray):
                 missing_idxs = np.argwhere(missing_pos_bool).T[0]
                 available_idxs = np.argwhere(available_pos_bool).T[0]
                 new_order = np.concatenate((available_idxs, missing_idxs))
-                mean2_reorg = PairwiseArrayStack._reorganize_pairwise_square_matrix(mean2, new_order)
+                mean2_reorg = PairwiseArrayStack._reorganize_pairwise_square_matrix(pwds_mean2, new_order)
                 # get sigma matrix
                 sigma = PairwiseArrayStack._cov_from_D2_matrix(mean2_reorg)
                 mu = np.zeros((1, self.num_bc-1))
@@ -419,12 +433,12 @@ class PairwiseArrayStack(np.ndarray):
 
         assert matrix.ndim == 2
         assert issymmetric(matrix)
-        N = matrix.shape[0]
+        num_bc = matrix.shape[0]
 
-        cov = np.zeros((N-1, N-1))
+        cov = np.zeros((num_bc-1, num_bc-1))
         np.fill_diagonal(cov, matrix[0,1:])
-        for i in range(N-1):
-            for j in range(i+1, N-1):
+        for i in range(num_bc-1):
+            for j in range(i+1, num_bc-1):
                 cov[i,j] = (cov[i,i] + cov[j,j] - matrix[i+1, j+1]) / 2
         
         cov = PairwiseArrayStack._make_pairwise_square_matrix_symmetric(cov)
@@ -514,7 +528,8 @@ class PairwiseArrayStack(np.ndarray):
 
     @staticmethod
     def _regularize_pairwise_square_matrix(matrix:np.ndarray, hack=False) -> np.ndarray:
-        """ Make matrix positive definite by adjusting negative eigenvalues.
+        """
+        Make matrix positive definite by adjusting negative eigenvalues.
 
         Parameters
         ----------
@@ -551,7 +566,7 @@ class PairwiseArrayStack(np.ndarray):
         Parameters
         ----------
         matrix : np.ndarray
-            Symmetric matrix to reorder.
+            Pairwise matrix to reorder.
         idxs : array-like
             New ordering of indices.
 
@@ -562,7 +577,7 @@ class PairwiseArrayStack(np.ndarray):
         """
 
         assert matrix.ndim == 2
-        assert issymmetric(matrix)
+        # assert issymmetric(matrix)
         assert len(np.unique(idxs)) == len(idxs)
         assert np.all(np.logical_and(idxs >= 0, idxs < matrix.shape[0]))
 
@@ -643,29 +658,30 @@ class PairwiseArrayStack(np.ndarray):
         return np.nan_to_num(result, nan=0, copy=True)
 
 
-    # TODO verify that the function works correctly
-    def filter(self, min_efficiency: Number = 0.1) -> np.ndarray:
-        """ Filter matrices with insufficient barcode detection.
+    # # TODO verify that the function works correctly
+    # def filter(self, min_efficiency: Number = 0.1) -> np.ndarray:
+    #     """ Filter matrices with insufficient barcode detection.
 
-        Parameters
-        ----------
-        min_efficiency : float
-            Minimum proportion of non-NaN values to retain a matrix.
+    #     Parameters
+    #     ----------
+    #     min_efficiency : float
+    #         Minimum proportion of non-NaN values to retain a matrix.
 
-        Returns
-        -------
-        np.ndarray
-            Filtered subset of the stack.
-        """
+    #     Returns
+    #     -------
+    #     np.ndarray
+    #         Filtered subset of the stack.
+    #     """
 
-        proportion_bins_not_missing = np.mean(~np.isnan(self), axis=1)
-        idxs = np.argwhere(proportion_bins_not_missing > min_efficiency)
+    #     proportion_bins_not_missing = np.mean(~np.isnan(self), axis=1)
+    #     idxs = np.argwhere(proportion_bins_not_missing > min_efficiency)
 
-        return np.squeeze(self[idxs])
+    #     return np.squeeze(self[idxs])
     
 
     def efficiency(self, by: str = "pixel"):
-        """ Compute detection efficiency by pixel or item.
+        """
+        Compute detection efficiency by pixel or item.
 
         Parameters
         ----------
@@ -689,7 +705,8 @@ class PairwiseArrayStack(np.ndarray):
     def plot_pwds_avg(self, path_to_save: str,
                       method: str = "mean",
                       form: str = "triangle", cmap: str = "Reds_r"):
-        """ Plot the ensemble-averaged pairwise distance matrix across the stack.
+        """
+        Plot the ensemble-averaged pairwise distance matrix across the stack.
 
         Parameters
         ----------
@@ -765,3 +782,6 @@ class PairwiseArrayStack(np.ndarray):
             visualization._plot_2d_triangle(matrix=matrix, path_to_save=path_to_save, cmap=cmap, label="mean proximity")
         else:
             visualization._plot_2d_square(matrix=matrix, path_to_save=path_to_save, cmap=cmap, label="mean proximity")
+    
+
+    # TODO plots for efficiency, examples of maps, etc.

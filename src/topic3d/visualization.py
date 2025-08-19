@@ -25,6 +25,21 @@ import math
 from PIL import Image
 
 
+def _get_grid_num_rows_cols(num_items):
+    """Get the best number of rows and columns for grid plots"""
+
+    sqrt = np.sqrt(num_items)
+    if sqrt == int(sqrt):
+        nrows = int(sqrt)
+        ncols = int(sqrt)
+    else:
+        nrows = int(np.ceil(sqrt))
+        ncols = int(np.floor(sqrt))
+        if nrows * ncols < num_items:
+            ncols += 1
+    return nrows, ncols
+
+
 def _plot_2d_triangle(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" "):
     """ Plot a 2D matrix as a triangular matrix with a colorbar
     
@@ -316,7 +331,7 @@ def parse_locus_labels(loci_dict, lib):
     return tick_dict
 
 
-def annotate_labels(ax, tick_dict, loc_dict, lib, fontsize=12, line_sep=0.04):
+def _annotate_labels(ax, tick_dict, loc_dict, lib, fontsize=12, line_sep=0.04):
     """
     Annotate the triangular plot axis with parsed labels, including:
     - Orientation markers for CTCF
@@ -430,7 +445,7 @@ def annotate_labels(ax, tick_dict, loc_dict, lib, fontsize=12, line_sep=0.04):
     return ax
 
 
-def add_gene_legend(ax, loci_dict, location='outside', anchor=(1.05, 1), fontsize=9):
+def _add_gene_legend(ax, loci_dict, location='outside', anchor=(1.05, 1), fontsize=9):
     """
     Adds a legend to the plot for genes with their associated colors.
 
@@ -464,30 +479,30 @@ def add_gene_legend(ax, loci_dict, location='outside', anchor=(1.05, 1), fontsiz
     return ax
 
 
-def plot_decomposition(LDA_decomposition, n_topics, training_path):
-    """ Plot a graph illustrating the representativity of each topic for the decompositions
+# def plot_decomposition(LDA_decomposition, n_topics, training_path):
+#     """ Plot a graph illustrating the representativity of each topic for the decompositions
 
-    @param LDA_decomposition:
-    @param n_topics:
-    @param training_path:
-    @return:
-    """
-    lda_decomposition_ordered = np.empty((0, n_topics), dtype=int)
-    idx = np.argmax(LDA_decomposition, axis=1)
-    for n_topic in range(n_topics):
-        selection = LDA_decomposition[idx == n_topic, :]
-        sorted_selection_idx = np.argsort(selection[:, n_topic])[::-1]  # sort them is descending order
-        lda_decomposition_ordered = np.concatenate((lda_decomposition_ordered, selection[sorted_selection_idx, :]),
-                                                   axis=0)
+#     @param LDA_decomposition:
+#     @param n_topics:
+#     @param training_path:
+#     @return:
+#     """
+#     lda_decomposition_ordered = np.empty((0, n_topics), dtype=int)
+#     idx = np.argmax(LDA_decomposition, axis=1)
+#     for n_topic in range(n_topics):
+#         selection = LDA_decomposition[idx == n_topic, :]
+#         sorted_selection_idx = np.argsort(selection[:, n_topic])[::-1]  # sort them is descending order
+#         lda_decomposition_ordered = np.concatenate((lda_decomposition_ordered, selection[sorted_selection_idx, :]),
+#                                                    axis=0)
 
-    fig = plt.figure(figsize=(10, 10))
-    ax = fig.add_subplot(1, 1, 1)
-    sns.heatmap(lda_decomposition_ordered, cmap="coolwarm", ax=ax)
-    ax.get_xaxis().set_visible(False)
-    ax.get_xaxis().set_visible(True)
-    saving_filename = path.join(training_path, f'topic_decomposition.png')
-    plt.savefig(saving_filename, dpi=150, bbox_inches='tight')
-    plt.close(fig)
+#     fig = plt.figure(figsize=(10, 10))
+#     ax = fig.add_subplot(1, 1, 1)
+#     sns.heatmap(lda_decomposition_ordered, cmap="coolwarm", ax=ax)
+#     ax.get_xaxis().set_visible(False)
+#     ax.get_xaxis().set_visible(True)
+#     saving_filename = path.join(training_path, f'topic_decomposition.png')
+#     plt.savefig(saving_filename, dpi=150, bbox_inches='tight')
+#     plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
@@ -526,10 +541,10 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
     im = _plot_triangular_matrix(topic_sq, ax=ax, cmap=cmap)
 
     tick_dict = parse_locus_labels(locus_dict, lib)
-    ax = annotate_labels(ax, tick_dict, locus_dict, lib,
+    ax = _annotate_labels(ax, tick_dict, locus_dict, lib,
                          fontsize=font_info["tick_label"],
                          line_sep=line_sep)
-    add_gene_legend(ax, locus_dict,
+    _add_gene_legend(ax, locus_dict,
                     location="outside", anchor=(0, 0.5),
                     fontsize=font_info["legend"])
 
@@ -622,37 +637,41 @@ def combine_images(columns, space, images, output_path='image.png'):
     print(f"Saved combined image to: {output_path}")
 
 
-def visualise_trace(trace:np.ndarray):
-    fig = plt.figure(figsize=(10, 10))
-    ax = fig.add_subplot(111, projection="3d")
-    x, y, z = zip(*trace)
-    ax.scatter(x, y, z, marker='o')
-    ax.plot(x, y, z, linestyle='-', linewidth=1)
-    pos = range(len(trace))
-    for p in pos:
-        ax.text(x[p], y[p], z[p], str(p))
-    ax.set_xlabel("X-axis")
-    ax.set_ylabel("Y-axis")
-    ax.set_zlabel("Z-axis")
-    ax.set_title("Trace")
-    fig.show()
+def plot_traces_3d_simple(path_to_save: str, traces: np.ndarray, use_one_ax=False):
+    """
+    Plot up to fifty traces as simple graphs in 3D
+    """
 
+    assert isinstance(traces, np.ndarray)
+    num_traces, num_bc, _ = traces.shape
 
-def visualise_trace_comparison(trace1:np.ndarray, trace2:np.ndarray):
-    fig = plt.figure(figsize=(10, 10))
-    ax = fig.add_subplot(111, projection="3d")
-    x, y, z = zip(*trace1)
-    ax.scatter(x, y, z, marker='o')
-    ax.plot(x, y, z, linestyle='-', linewidth=1)
-    pos = range(len(trace1))
-    for p in pos:
-        ax.text(x[p], y[p], z[p], str(p))
-    x, y, z = zip(*trace2)
-    ax.scatter(x, y, z, marker='o')
-    ax.plot(x, y, z, linestyle='-', linewidth=1)
-    ax.set_xlabel("X-axis")
-    ax.set_ylabel("Y-axis")
-    ax.set_zlabel("Z-axis")
-    ax.set_title("Trace 1 vs Trace 2")
-    fig.show()
-    plt.close()
+    if use_one_ax:
+        nr = 1
+        nc = 1
+    else:
+        nr, nc = _get_grid_num_rows_cols(num_traces)
+
+    f = 8   # factor for scaling of plot based on number of rows and columns
+
+    plt.rcParams["font.family"] = ["sans-serif"]
+    plt.rcParams["axes.linewidth"] = 1.5
+    plt.rcParams["xtick.labelsize"] = 18
+    plt.rcParams["ytick.labelsize"] = 18
+    fd = {"fontfamily": "sans-serif", "fontsize": 20}
+
+    fig, axes = plt.subplots(nrows=nr, ncols=nc, subplot_kw=dict(projection="3d"))
+    fig.set_figwidth(f * nr)
+    fig.set_figheight(f * nc)
+    for ax, n in zip(axes.flat if nr > 1 else [axes], range(num_traces)):
+        x, y, z = zip(*traces[n])
+        ax.scatter(x, y, z, s=70, marker="o")
+        ax.plot(x, y, z, linestyle="-", linewidth=1.25)
+        for i in range(0, num_bc, 3):
+            ax.text(x[i], y[i], z[i], str(i), fontdict=fd)
+        ax.set_xlabel("X-axis", labelpad=15, fontdict=fd)
+        ax.set_ylabel("Y-axis", labelpad=15, fontdict=fd)
+        ax.set_zlabel("Z-axis", labelpad=15, fontdict=fd)
+    plt.tight_layout()
+
+    fig.savefig(path_to_save, dpi=300)
+    plt.close(fig)

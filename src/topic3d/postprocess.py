@@ -21,7 +21,7 @@ from scipy.cluster.hierarchy import linkage, fcluster
 import seaborn as sns
 from sklearn.decomposition import PCA
 import joblib as jl
-import visualization
+from . import visualization
 
 
 def consensus(components:np.ndarray, 
