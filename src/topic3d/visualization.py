@@ -241,25 +241,6 @@ def odds_ratio_matrix(mat: np.ndarray, locus_dict: Dict, bright_q: float = BRIGH
     return results
 
 
-def sort_topics_by_representativity(n_topics, LDA_decomposition, min_weight=0.2):
-    """ Using the topic decomposition, sort the topic by their representativity.
-
-    @param min_weight: (float) minimum weight threshold above which the topic is considered relevant
-    @param n_topics: (int) number of topics output by the LDA analysis
-    @param LDA_decomposition: (np.array) topic decomposition for each cell - indicates the weight associated to each
-    topic for the decomposition
-    @return: topic_frequency (np.array) : frequency of finding each topic within the data (after sorting)
-             topic_idx (np.array) : indices used to sort the topics by representativity
-    """
-    topic_representation = [len(LDA_decomposition[LDA_decomposition[:, n] > min_weight, n])
-                            for n in range(n_topics)]
-    topic_representation = np.array(topic_representation)
-    topic_idx = np.argsort(topic_representation)[::-1]
-    topic_frequency = topic_representation / LDA_decomposition.shape[0]
-
-    return topic_frequency, topic_idx
-
-
 def parse_locus_labels(loci_dict, lib):
     """
     Parsing function to handle the different labels from the json file:

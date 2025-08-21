@@ -303,7 +303,8 @@ class ProcessedData:
 
 
 class DecompositionResult:
-    """ Decomposition results handler, loads and saves results, used to quickly perform further analyses on them
+    """
+    Decomposition results handler, loads and saves results, used to quickly perform further analyses on them
     
     Methods for post-processing described to compute representativity, reconstruction, coherence and divergence
     
@@ -458,6 +459,36 @@ class DecompositionResult:
         return np.mean(self.decomposition > threshold, axis=0)
     
 
+    # TODO sorting components by representativity
+    # def sort_components(self, threshold=None, return_idxs:bool = False):
+    #     """
+    #     Sort a decomposition by its representativity.
+
+    #     @param min_weight: (float) minimum weight threshold above which the topic is considered relevant
+    #     @param n_topics: (int) number of topics output by the LDA analysis
+    #     @param LDA_decomposition: (np.array) topic decomposition for each cell - indicates the weight associated to each
+    #     topic for the decomposition
+    #     @return: topic_frequency (np.array) : frequency of finding each topic within the data (after sorting)
+    #              topic_idx (np.array) : indices used to sort the topics by representativity
+    #     """
+
+    #     if threshold is None:
+    #         threshold = _extract_threshold(self.decomposition)
+    #     else:
+    #         assert isinstance(threshold, Number)
+        
+    #     num_items, num_topics = self.decomposition.shape
+
+    #     representativity = np.sum(decomposition > threshold, axis=0)
+            
+    #     representativity = np.asarray([len(decomposition[decomposition[:, n] > threshold, n]) for n in range(n_topics)])
+    #     representativity = np.array(representativity)
+    #     topic_idx = np.argsort(representativity)[::-1]
+    #     topic_frequency = representativity / decomposition.shape[0]
+
+    #     return topic_frequency, topic_idx
+    
+
     # TODO returning mean divergence for decomposition, sorting the matrix by least to most distant?
     def divergence(self, path_to_save:str = None):
         """Compute the Jensen-Shannon divergence between each pair of components captured from a training
@@ -491,36 +522,28 @@ class DecompositionResult:
         return pw_divergence
 
 
-    # TODO a more optimum way of structuring the function, using a dict of keys and methods, maybe?
     def coherence(self, method: str = "all"):
-        """Compute the coherence of the decomposition
+        """Compute the coherence of the decomposition using the method indicated.
         
-        Using NPMI, cosine or UMASS, or all of them
+        Using NPMI and cosine, or UMASS, or all of them
         """
 
         assert isinstance(method, str) and method.lower() in ["npmi-cos", "umass", "all"]
         assert self.data_training is not None
 
-        if method == "npmi-cos":
-            return self._compute_coherence_npmi_cos(components=self.components,
-                                                    data_used=self.data_training,
-                                                    num_top_pixels=self.components.shape[1]//10,
-                                                    randomize_data=False)
-        elif method == "umass":
-            return self._compute_coherence_umass(components=self.components,
-                                                 data_used=self.data_training,
-                                                 num_top_pixels=self.components.shape[1]//10,
-                                                 randomize_data=False)
-        else:
-            coherence_npmi_cos = self._compute_coherence_npmi_cos(components=self.components,
-                                                                  data_used=self.data_training,
-                                                                  num_top_pixels=self.components.shape[1]//10,
-                                                                  randomize_data=False)
-            coherence_umass = self._compute_coherence_umass(components=self.components,
-                                                            data_used=self.data_training,
-                                                            num_top_pixels=self.components.shape[1]//10,
-                                                            randomize_data=False)
-            return coherence_npmi_cos, coherence_umass
+        out = []
+        if method in ["npmi-cos", "all"]:
+            out.append(self._compute_coherence_npmi_cos(components=self.components,
+                                                        data_used=self.data_training,
+                                                        num_top_pixels=self.components.shape[1]//10,
+                                                        randomize_data=False))
+        if method in ["umass", "all"]:
+            out.append(self._compute_coherence_umass(components=self.components,
+                                                     data_used=self.data_training,
+                                                     num_top_pixels=self.components.shape[1]//10,
+                                                     randomize_data=False))
+        
+        return tuple(out)
 
 
     # TODO t-SNE method, embedding plot with clusters needs to be saved, HDBSCAN parameter handling and model saving
