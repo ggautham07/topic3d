@@ -94,9 +94,57 @@ class RawData:
             traces[j, barcodes] = coords[:]
         
         return traces
+    
+    
+    # TODO integrate with main load function, if possible including similar version for FOF data (code available from Marcelo)
+    def _merge_numpy_trace_files(*args):
+        """
+        Merge multiple Numpy trace files.
+
+        Loads the datasets and stacks them together in a single dataset. The total number of items is the sum of 
+        the number of items of each dataset and the maximum number of barcodes (other coordinates are replaced by 
+        NaNs)
+
+        Parameters
+        --------
+        Numpy file paths
+
+        Returns
+        --------
+
+        """
+
+        # Get the datasets
+        fps = [fp for fp in args if path.exists(fp) and fp.endswith(".npy")]
+        datasets = [np.load(fp, allow_pickle=True) for fp in fps]
+
+        # New dataset has the maximum number of barcodes from initial dataset list
+        num_bc_max = None
+        num_items = 0
+        for ds in datasets:
+            assert ds.ndim == 3
+            assert ds.shape[-1] == 3
+            num_items += ds.shape[0]
+            if num_bc_max is None:
+                num_bc_max = ds.shape[1]
+                continue
+            if ds.shape[0] > num_bc_max:
+                num_bc_max = ds.shape[0]
+        
+        # Filling the data from each dataset, rest is NaN
+        out = np.zeros(num_items, num_bc_max, 3)
+        out[out == 0] = np.nan
+        start = 0
+        for ds in datasets:
+            assert np.all(out[start:ds.shape[0], 0:ds.shape[1], :] == np.nan)
+            out[start:ds.shape[0], 0:ds.shape[1], :] = ds[:]
+            start += ds.shape[0]
+        
+        return out
 
 
     # TODO path_to_file can also take a list of files with the same extension/format, and merge the data
+    # original code version for combining multiple files written by Marcelo only works for FOF files, need to
     def load(self, path_to_file:str):
         """ Open a trace file; can either be a FOF-CT trace core file or a Numpy file.
         Former will be formatted as a pandas dataframe.
@@ -288,14 +336,17 @@ class ProcessedData:
         plt.tight_layout()
         return im
     
+
     # TODO NOTE standardise use of sns for all plots to maintain consistency
     def plot_3d_vs_genomic_dists():
         """Plot the 3D distance as a function of the genomic distance"""
 
+
     # TODO
     def plot_pwds_distribution():
         """"""
-    
+
+
     # TODO
     def plot_bc_effs():
         """"""
@@ -316,6 +367,7 @@ class DecompositionResult:
         self.decomposition = decomposition
         self.components = model.components_
         self.num_components = len(self.components)
+        self.num_items = len(self.decomposition)
         self.metadata = {}
         
         # TODO store original dataset indices of the training and testing sets using self.data_idxs = kwargs.get()
@@ -344,11 +396,12 @@ class DecompositionResult:
 
 
     def reconstruction(self):
-        """Reconstruct single-cell maps using components and decomposition"""
+        """Reconstruct individual contact vectors using captured components and the decomposition matrix"""
         
         return self.decomposition @ self.components
     
     
+    # TODO vectorised version, current script takes in the order of seconds to minutes depending on dataset size    
     @staticmethod
     def _compute_coherence_umass(components, data_used, num_top_pixels, randomize_data=False):
         """ Compute the umass coherence for a selected set of topics and raw data. The calculation is performed by selecting
@@ -385,6 +438,7 @@ class DecompositionResult:
         return coherence_umass
 
 
+    # TODO vectorised version, current script takes in the order of seconds to minutes depending on dataset size
     @staticmethod
     def _compute_coherence_npmi_cos(components, data_used, num_top_pixels=10, randomize_data=False):
         """ Compute coherence for a selected set of topics and raw data using two methods. The calculation is based on the
@@ -459,34 +513,38 @@ class DecompositionResult:
         return np.mean(self.decomposition > threshold, axis=0)
     
 
-    # TODO sorting components by representativity
-    # def sort_components(self, threshold=None, return_idxs:bool = False):
-    #     """
-    #     Sort a decomposition by its representativity.
+    # NOTE vectorised version of jb's original code, NEEDS VALIDATION
+    def sort_components(self, threshold=None, return_freqs : bool = False):
+        """
+        Sort the components captured from a decomposition by its representativity.
 
-    #     @param min_weight: (float) minimum weight threshold above which the topic is considered relevant
-    #     @param n_topics: (int) number of topics output by the LDA analysis
-    #     @param LDA_decomposition: (np.array) topic decomposition for each cell - indicates the weight associated to each
-    #     topic for the decomposition
-    #     @return: topic_frequency (np.array) : frequency of finding each topic within the data (after sorting)
-    #              topic_idx (np.array) : indices used to sort the topics by representativity
-    #     """
+        Parameters
+        --------
+        threshold: float
+            minimum weight threshold above which the component is considered relevant (or representative)
+        return_freqs: bool
+            return the frequencies of each component sorted by representativity
 
-    #     if threshold is None:
-    #         threshold = _extract_threshold(self.decomposition)
-    #     else:
-    #         assert isinstance(threshold, Number)
+        Returns
+        --------
+        freqs : numpy.ndarray
+            frequency of finding each component within the data (after sorting)
+        idxs : numpy.ndarray
+            indices used to sort the components by representativity
+        """
+
+        if threshold is None:
+            threshold = self._extract_threshold(self.decomposition)
+        else:
+            assert isinstance(threshold, Number)
         
-    #     num_items, num_topics = self.decomposition.shape
+        representativity = np.sum(self.decomposition > threshold, axis=0)
+        idxs = np.argsort(representativity)[::-1]
+        freqs = representativity / self.num_items
 
-    #     representativity = np.sum(decomposition > threshold, axis=0)
-            
-    #     representativity = np.asarray([len(decomposition[decomposition[:, n] > threshold, n]) for n in range(n_topics)])
-    #     representativity = np.array(representativity)
-    #     topic_idx = np.argsort(representativity)[::-1]
-    #     topic_frequency = representativity / decomposition.shape[0]
-
-    #     return topic_frequency, topic_idx
+        if return_freqs:
+            return idxs, freqs
+        return idxs
     
 
     # TODO returning mean divergence for decomposition, sorting the matrix by least to most distant?
@@ -522,25 +580,36 @@ class DecompositionResult:
         return pw_divergence
 
 
-    def coherence(self, method: str = "all"):
+    def coherence(self, method: str = "all", num_top_pixels : int = None):
         """Compute the coherence of the decomposition using the method indicated.
         
-        Using NPMI and cosine, or UMASS, or all of them
+        Parameters
+        --------
+        method : str
+            npmi-cos, umass, or all
+
+        Returns
+        --------
+        coherence : tuple
         """
 
         assert isinstance(method, str) and method.lower() in ["npmi-cos", "umass", "all"]
         assert self.data_training is not None
+        if num_top_pixels is None:
+            num_top_pixels = self.components.shape[1] // 10
+        else:
+            isinstance(num_top_pixels, int)
 
         out = []
         if method in ["npmi-cos", "all"]:
             out.append(self._compute_coherence_npmi_cos(components=self.components,
                                                         data_used=self.data_training,
-                                                        num_top_pixels=self.components.shape[1]//10,
+                                                        num_top_pixels=num_top_pixels,
                                                         randomize_data=False))
         if method in ["umass", "all"]:
             out.append(self._compute_coherence_umass(components=self.components,
                                                      data_used=self.data_training,
-                                                     num_top_pixels=self.components.shape[1]//10,
+                                                     num_top_pixels=num_top_pixels,
                                                      randomize_data=False))
         
         return tuple(out)

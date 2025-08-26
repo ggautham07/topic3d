@@ -13,7 +13,7 @@ topic3d applies Latent Dirichlet Allocation (LDA) to collections of pairwise sin
 
 ## Installation
 
-The package is still under active development and can only be installed for testing
+The package is still under active development and can only be installed for testing by building from source
 
 
 ## Usage
@@ -45,7 +45,7 @@ for x in data_processed.keys():
 
 ## Authors
 
-Jean-Bernard Fiche, Gautham Ganesh, Marcelo Nollmann
+Jean-Bernard Fiche (@jbfiche), Gautham Ganesh (@ggautham07), Marcelo Nollmann (@marcnol)
 
 
 ## License
