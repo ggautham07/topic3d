@@ -263,6 +263,31 @@ class RawData:
         results["n_data"] = dists_3d_vs_genomic[:, 2]
 
         return results
+    
+
+    def _compute_inter_loci_genomic_dist(lib, n_bins):
+        """ Compute the genomic distance separating two consecutive barcodes (from the experiment)
+
+        @param lib: (pandas dataframe) coordinates of the barcodes
+        @param n_bins: (int) total number of barcodes of the library
+        @return: locus_dist: (pandas dataframe) contains the genomic distance in kbp
+        """
+        locus_dist = pd.DataFrame()
+        mean_pos = (lib["Chrom_End"] + lib["Chrom_Start"]) / 2
+
+        for bin in range(n_bins-1):
+            d = mean_pos[bin + 1] - mean_pos[bin]
+            d = int(d /1000)
+            if bin == 0:
+                d_interloci = [d]
+                locus = [f'locus_{bin}_{bin+1}']
+            else:
+                d_interloci = np.concatenate((d_interloci, [d]), axis=0)
+                locus = locus + [f'locus_{bin}_{bin+1}']
+
+        locus_dist['locus'] = locus
+        locus_dist['genomic distance (kbp)'] = d_interloci
+        return locus_dist
 
 
 

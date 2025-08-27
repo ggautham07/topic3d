@@ -785,3 +785,24 @@ class PairwiseArrayStack(np.ndarray):
     
 
     # TODO plots for efficiency, examples of maps, etc.
+    def plot_efficiency_map(pwd, path_to_save):
+        """ Compute efficiency map.
+
+        @param pwd: (numpy array) pairwise distance maps
+        @param root: (str) root folder
+        @param tag_exp: (str) indicate the type of experiment that is analyzed
+        """
+        n_maps = pwd.shape[0]
+        efficiency = np.zeros((pwd.shape[1],))
+        for n in range(pwd.shape[1]):
+            efficiency[n] = np.sum(~np.isnan(pwd[:, n])) * 100 / n_maps
+        efficiency = squareform(efficiency)
+
+        plt.figure(figsize=(8, 6))
+        plt.imshow(efficiency, cmap="hot")
+        plt.colorbar(label="efficiency")
+        plt.tight_layout()
+        plt.title(f'{tag} n={pwd.shape[0]}')
+        fig_name = f"Efficiency_{tag_exp}.png"
+        fig_path = path.join(root, "barcode_efficiency", fig_name)
+        plt.savefig(fig_path, format="png")
