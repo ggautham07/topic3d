@@ -3,7 +3,7 @@
 Data types for topic decomposition (:mod:`topic3d.datatypes`)
 =====================================================
 
-.. authors:: gsgautham98, jbfiche, marcnol
+.. authors:: ggautham07, jbfiche, marcnol
 
 Class reference
 -----------------
@@ -15,6 +15,7 @@ Class reference
 # =============================================================================
 
 from numbers import Number
+from typing import Iterable
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import squareform, pdist
@@ -582,6 +583,29 @@ class PairwiseArrayStack(np.ndarray):
         assert np.all(np.logical_and(idxs >= 0, idxs < matrix.shape[0]))
 
         return matrix[:,idxs][idxs]
+    
+
+    def efficiency(self, by: str = "pixel"):
+        """
+        Compute detection efficiency by pixel or item.
+
+        Parameters
+        ----------
+        by : str
+            "pixel" for per-bin efficiency, "item" for whole matrices.
+
+        Returns
+        -------
+        np.ndarray
+            Efficiencies in percent (0–100).
+        """
+
+        assert isinstance(by, str) and by in ["pixel", "item", "matrix"]
+
+        is_detected = ~np.isnan(self)
+        effs = np.around(np.mean(is_detected, axis=0 if by=="pixel" else 1) * 100, decimals=2)
+
+        return effs
 
 
     def ensemble(self, method="mean", regularize=False) -> np.ndarray:
@@ -677,29 +701,6 @@ class PairwiseArrayStack(np.ndarray):
     #     idxs = np.argwhere(proportion_bins_not_missing > min_efficiency)
 
     #     return np.squeeze(self[idxs])
-    
-
-    def efficiency(self, by: str = "pixel"):
-        """
-        Compute detection efficiency by pixel or item.
-
-        Parameters
-        ----------
-        by : str
-            "pixel" for per-bin efficiency, "item" for whole matrices.
-
-        Returns
-        -------
-        np.ndarray
-            Efficiencies in percent (0–100).
-        """
-
-        assert isinstance(by, str) and by in ["pixel", "item", "matrix"]
-
-        is_detected = ~np.isnan(self)
-        effs = np.around(np.mean(is_detected, axis=0 if by=="pixel" else 1) * 100, decimals=2)
-
-        return effs
 
 
     def plot_pwds_avg(self, path_to_save: str,
@@ -733,17 +734,16 @@ class PairwiseArrayStack(np.ndarray):
         assert form in ["triangle", "square"]
         assert isinstance(method, str) and method in ["mean", "median"]
 
+        map_form_fn = {"triangle": visualization.plot_2d_triangle, "square": visualization.plot_2d_square,}
+
         matrix = self.ensemble(method=method)
-        if form == "triangle":
-            visualization._plot_2d_triangle(matrix=matrix, path_to_save=path_to_save,
-                                            cmap=cmap, label=f"{method} distance")
-        else:
-            visualization._plot_2d_square(matrix=matrix, path_to_save=path_to_save,
-                                          cmap=cmap, label=f"{method} distance")
+        im = map_form_fn[form](matrix=matrix, path_to_save=path_to_save, cmap=cmap, label=f"{method} distance")
+
+        return im
 
 
     def plot_proximity_avg(self, path_to_save: str,
-                           threshold: Number, hardness: Number = 1,
+                           threshold: Number, hardness: Number = 1, keep_NaNs: bool = False,
                            form: str = "triangle", cmap: str = "Reds"):
         """ Plot the ensemble-averaged proximity matrix based on a distance threshold.
 
@@ -759,7 +759,7 @@ class PairwiseArrayStack(np.ndarray):
         hardness : float, default=1
             Controls the slope of the sigmoid used for soft thresholding. 1 = hard threshold.
         form : str, default="triangle"
-            Format of the plot: "triangle" for lower triangle heatmap, or "square" for full matrix heatmap.
+            Format of the plot: "triangle" for triangular heatmap, or "square" for full matrix heatmap.
         cmap : str, default="Reds"
             Matplotlib colormap to use for the plot.
 
@@ -776,33 +776,70 @@ class PairwiseArrayStack(np.ndarray):
         assert isinstance(path_to_save, str)
         assert form in ["triangle", "square"]
 
-        proximity_stack = self.proximity(threshold=threshold, hardness=hardness)
-        matrix = np.nanmean(proximity_stack, axis=0)
-        if form == "triangle":
-            visualization._plot_2d_triangle(matrix=matrix, path_to_save=path_to_save, cmap=cmap, label="mean proximity")
-        else:
-            visualization._plot_2d_square(matrix=matrix, path_to_save=path_to_save, cmap=cmap, label="mean proximity")
-    
+        map_form_fn = {"triangle": visualization.plot_2d_triangle, "square": visualization.plot_2d_square,}
 
-    # TODO plots for efficiency, examples of maps, etc.
-    def plot_efficiency_map(pwd, path_to_save):
-        """ Compute efficiency map.
+        prox_stack = self.proximity(threshold=threshold, hardness=hardness, keep_NaNs=keep_NaNs)
+        prox_mean = np.nanmean(prox_stack, axis=0)
+        im = map_form_fn[form](matrix=prox_mean, path_to_save=path_to_save, cmap=cmap, label="mean proximity")
 
-        @param pwd: (numpy array) pairwise distance maps
-        @param root: (str) root folder
-        @param tag_exp: (str) indicate the type of experiment that is analyzed
+        return im
+
+
+    # # TODO plots for efficiency, examples of maps, etc.
+    # def plot_efficiency_map(pwd, path_to_save):
+    #     """ Compute efficiency map.
+
+    #     @param pwd: (numpy array) pairwise distance maps
+    #     @param root: (str) root folder
+    #     @param tag_exp: (str) indicate the type of experiment that is analyzed
+    #     """
+    #     n_maps = pwd.shape[0]
+    #     efficiency = np.zeros((pwd.shape[1],))
+    #     for n in range(pwd.shape[1]):
+    #         efficiency[n] = np.sum(~np.isnan(pwd[:, n])) * 100 / n_maps
+    #     efficiency = squareform(efficiency)
+
+    #     plt.figure(figsize=(8, 6))
+    #     plt.imshow(efficiency, cmap="hot")
+    #     plt.colorbar(label="efficiency")
+    #     plt.tight_layout()
+    #     plt.title(f'{tag} n={pwd.shape[0]}')
+    #     fig_name = f"Efficiency_{tag_exp}.png"
+    #     fig_path = path.join(root, "barcode_efficiency", fig_name)
+    #     plt.savefig(fig_path, format="png")
+
+
+    def plot_mean_proximity_proportion(self, path_to_save:str, thresholds:list, hardness=1):
         """
-        n_maps = pwd.shape[0]
-        efficiency = np.zeros((pwd.shape[1],))
-        for n in range(pwd.shape[1]):
-            efficiency[n] = np.sum(~np.isnan(pwd[:, n])) * 100 / n_maps
-        efficiency = squareform(efficiency)
+        Plot the mean proportion of data in proximity given the parameters.
 
-        plt.figure(figsize=(8, 6))
-        plt.imshow(efficiency, cmap="hot")
-        plt.colorbar(label="efficiency")
-        plt.tight_layout()
-        plt.title(f'{tag} n={pwd.shape[0]}')
-        fig_name = f"Efficiency_{tag_exp}.png"
-        fig_path = path.join(root, "barcode_efficiency", fig_name)
-        plt.savefig(fig_path, format="png")
+        Parameters
+        --------
+        threshold : float
+            Distance cutoff.
+        hardness : float
+            Controls sigmoid slope. 1 is hard threshold; lower is softer.
+        keep_NaNs : bool
+            Whether to retain NaNs.
+        """
+
+        if isinstance(thresholds, Number):
+            thresholds = np.asarray([thresholds])
+        
+        else:
+            assert isinstance(thresholds, Iterable)
+
+        prop_means = np.empty(len(thresholds))
+        for i, thr in enumerate(thresholds):
+            stack = self.proximity(threshold=thr, hardness=hardness, keep_NaNs=False)
+            if hardness != 1:
+                stack = np.where(stack >= 0.75, 1, 0)
+            prop_means[i] = np.mean(stack)
+
+        fig = visualization.plot_line(x=thresholds, y=prop_means,
+                                        path_to_save=path_to_save,
+                                        xlabel="Proximity threshold", ylabel="Mean proximity proportion",
+                                        linestyle="-", linewidth=4,
+                                        marker="o", markersize=16)
+
+        return fig

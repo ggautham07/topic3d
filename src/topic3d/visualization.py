@@ -3,7 +3,7 @@
 Plotting methods for tracing data and topic decomposition (:mod:`topic3d.visualization`)
 =====================================================
 
-.. authors:: jbfiche, marcnol, gsgautham98
+.. authors:: jbfiche, marcnol, ggautham07
 
 Function reference
 ------------------
@@ -40,7 +40,41 @@ def _get_grid_num_rows_cols(num_items):
     return nrows, ncols
 
 
-def _plot_2d_triangle(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" "):
+def plot_line(x, y, path_to_save, xlabel="", ylabel="", **kwargs):
+    """
+    Create a figure and axis object, and plot the data in a manuscript-ready graphic and format
+
+    Parameters
+    --------
+    x : Iterable
+        points along the x-axis
+    y : Iterable
+        points along the y-axis
+    path_to_save : 
+
+    """
+
+    properties = kwargs.copy()
+
+    fig, ax = plt.subplots()
+    fig.set_figwidth(10)
+    fig.set_figheight(9)
+    ax.tick_params(axis="x", labelsize=30, which="major", pad=16, direction="in", length=8, width=1.1)
+    ax.tick_params(axis="x", labelsize=22, which="minor", pad=16, direction="in", length=4, width=1)
+    ax.tick_params(axis="y", labelsize=30, which="major", pad=16, direction="in", length=8, width=1.1)
+    ax.tick_params(axis="y", labelsize=22, which="minor", pad=16, direction="in", length=4, width=1)
+    ax.tick_params(which="both", bottom=True, top=True, left=True, right=True)
+    ax.tick_params(labelbottom=True, labeltop=False, labelleft=True, labelright=False)
+    ax.set_xlabel(xlabel, fontsize=36, fontweight=400, labelpad=28)
+    ax.set_ylabel(ylabel, fontsize=36, fontweight=400, labelpad=30)
+    sns.lineplot(x=x, y=y, ax=ax, **properties)
+    plt.tight_layout()
+    fig.savefig(path_to_save)
+    
+    return fig
+
+
+def plot_2d_triangle(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" "):
     """ Plot a 2D matrix as a triangular matrix with a colorbar
     
     Parameters
@@ -95,7 +129,7 @@ def _plot_2d_triangle(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" 
 
 
 
-def _plot_2d_square(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" "):
+def plot_2d_square(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=""):
     """ Plot a 2D matrix as a square symmetric matrix with a colorbar
     
     Parameters
@@ -135,6 +169,36 @@ def _plot_2d_square(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" ")
     
     fig.savefig(path_to_save)
     plt.close(fig)
+
+
+def plot_2d_square_grid(matrices, titles, path_to_save:str, common_colorbar: bool = False, cmap="Reds", label=""):
+
+    from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+
+    dratio = 3
+    num_rows, num_cols = _get_grid_num_rows_cols(len(matrices))
+    fig, axes = plt.subplots(num_rows, num_cols)
+    fig.set_figwidth(num_rows * dratio)
+    fig.set_figheight(num_cols * dratio)
+    if common_colorbar:
+        fig.subplots_adjust(bottom=0.8)
+        cbar_ax = fig.add_axes([0.1, 0.01, 0.8, 0.03]) 
+    fig.set_layout_engine("tight")
+    for i, ax, matrix in zip(range(len(matrices)), axes.flat, matrices):
+        matrix = squareform(matrix) if matrix.ndim == 1 else matrix[:]
+        im = sns.heatmap(matrix, cmap=cmap, ax=ax, cbar=True, cbar_ax=cbar_ax if common_colorbar else None, square=True)
+        ax.set_title(f"{titles[i]}", fontsize=12, y=1.02)
+        m, n = matrix.shape[0], matrix.shape[1]
+        ax.set_xticks(np.arange(0, m, 10, dtype=int))
+        ax.set_xticks(np.arange(0.5, m, 1), minor=True)
+        ax.set_yticks(np.arange(0, n, 10, dtype=int))
+        ax.set_yticks(np.arange(0.5, n, 1), minor=True)
+        ax.tick_params(which="minor", bottom=False, left=False)
+    fig.savefig(path_to_save, dpi=300, bbox_inches="tight")
+    
+    return fig
+
+
 
 
 ##################### FROM JB and MARCELO #######################

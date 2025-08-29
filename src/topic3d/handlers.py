@@ -3,7 +3,7 @@
 Full object handlers for topic decomposition data and results (:mod:`topic3d.handlers`)
 =====================================================
 
-.. authors:: jbfiche, gsgautham98, marcnol
+.. authors:: jbfiche, ggautham07, marcnol
 
 Function reference
 ------------------
@@ -25,10 +25,12 @@ import seaborn as sns
 from sklearn.decomposition import LatentDirichletAllocation
 import matplotlib.pyplot as plt
 from itertools import combinations
+from collections import OrderedDict
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import joblib as jl
 from .datatypes import CoordsArrayStack, PairwiseArrayStack
+import warnings
 
 
 
@@ -96,7 +98,8 @@ class RawData:
         return traces
     
     
-    # TODO integrate with main load function, if possible including similar version for FOF data (code available from Marcelo)
+    # TODO integrate with main load function, if possible including similar version for FOF data 
+    # (code available from Marcelo)
     def _merge_numpy_trace_files(*args):
         """
         Merge multiple Numpy trace files.
@@ -144,8 +147,8 @@ class RawData:
 
 
     # TODO path_to_file can also take a list of files with the same extension/format, and merge the data
-    # original code version for combining multiple files written by Marcelo only works for FOF files, need to
-    def load(self, path_to_file:str):
+    # original code version for combining multiple files written by Marcelo only works for FOF files
+    def load(self, path_to_file:str, extract_items:bool = True):
         """ Open a trace file; can either be a FOF-CT trace core file or a Numpy file.
         Former will be formatted as a pandas dataframe.
         @param file_path: (str) path to the file
@@ -183,15 +186,17 @@ class RawData:
             self.trace_ids = np.unique(self.library["Trace_ID"])
             self.num_traces = len(self.trace_ids)
 
+            # TODO sorting of bins to retain insertion order
             chrom_starts = np.unique(data["Chrom_Start"])
             chrom_ends = np.unique(data["Chrom_End"])
             assert len(chrom_starts) == len(chrom_ends)
             self.num_bc = len(chrom_starts)
             self.bc_ids = list(range(self.num_bc))
-            self.bc_bins = dict(zip(self.bc_ids, zip(chrom_starts, chrom_ends)))
+            self.bc_bins = OrderedDict(zip(self.bc_ids, zip(chrom_starts, chrom_ends)))     # NOTE maybe use 3-col array
 
             # Extraction of traces
-            self.traces = CoordsArrayStack(self._extract_traces_from_fof())
+            if extract_items:
+                self.traces = CoordsArrayStack(self._extract_traces_from_fof())
         
         else:
             raise Exception("Invalid file extension. Only npy and csv files accepted")
@@ -265,29 +270,22 @@ class RawData:
         return results
     
 
-    def _compute_inter_loci_genomic_dist(lib, n_bins):
+    def _compute_inter_loci_genomic_dist(self):
         """ Compute the genomic distance separating two consecutive barcodes (from the experiment)
 
         @param lib: (pandas dataframe) coordinates of the barcodes
         @param n_bins: (int) total number of barcodes of the library
         @return: locus_dist: (pandas dataframe) contains the genomic distance in kbp
         """
-        locus_dist = pd.DataFrame()
-        mean_pos = (lib["Chrom_End"] + lib["Chrom_Start"]) / 2
 
-        for bin in range(n_bins-1):
-            d = mean_pos[bin + 1] - mean_pos[bin]
-            d = int(d /1000)
-            if bin == 0:
-                d_interloci = [d]
-                locus = [f'locus_{bin}_{bin+1}']
-            else:
-                d_interloci = np.concatenate((d_interloci, [d]), axis=0)
-                locus = locus + [f'locus_{bin}_{bin+1}']
+        bins = np.asarray([[start, end] for start, end in self.bc_bins.values()])
+        assert bins.shape[-1] == 2
+        if np.any(bins[1:, 0] - bins[:-1, 1] != 0):
+            warnings.warn("Discontiguous segments supplied, to note while interpreting the the result")
 
-        locus_dist['locus'] = locus
-        locus_dist['genomic distance (kbp)'] = d_interloci
-        return locus_dist
+        bins_mean_pos = np.mean(bins, axis=1)
+
+        return bins_mean_pos[1:] - bins_mean_pos[:-1]
 
 
 
@@ -388,12 +386,13 @@ class DecompositionResult:
     """
 
     def __init__(self, model:LatentDirichletAllocation, decomposition:np.ndarray, **kwargs):
+        
         self.model = model
         self.decomposition = decomposition
         self.components = model.components_
         self.num_components = len(self.components)
         self.num_items = len(self.decomposition)
-        self.metadata = {}
+        self.metadata = kwargs.copy()
         
         # TODO store original dataset indices of the training and testing sets using self.data_idxs = kwargs.get()
         self.data_training = kwargs.get("data_training", None)
@@ -405,126 +404,33 @@ class DecompositionResult:
 
 
     # TODO JSON file for the metadata, optional additional copy in HDF5 file
-    def save(self, path_to_save_dir:str):
-        """Save the decomposition results to a joblib file for the model, json file for metadata and a 
-        HDF5 file for everything else"""
+    def save(self, dir_to_save:str):
+        """
+        Save the decomposition results to a joblib file for the model, JSON file for metadata and a 
+        HDF5 file for everything else
+        """
         
-        with h5py.File(path.join(path_to_save_dir, "results.h5"), mode="w") as handler:
+        with h5py.File(path.join(dir_to_save, "results.h5"), mode="w") as handler:
             handler.create_dataset(name="components", data=self.components)
             handler.create_dataset(name="decomposition", data=self.decomposition)
             handler.create_dataset(name="data_training", data=self.data_training)
             handler.create_dataset(name="data_testing", data=self.data_testing)
             handler.attrs = self.metadata
         
-        import joblib
-        joblib.dump(self.model, path.join(path_to_save_dir, "model_lda.jl"))
+        jl.dump(self.model, path.join(dir_to_save, "model_lda.jl"))
 
 
-    def reconstruction(self):
-        """Reconstruct individual contact vectors using captured components and the decomposition matrix"""
-        
+    def reconstruction(self, normalize_components=False):
+        """
+        Reconstruct individual contact vectors using the captured components and the decomposition matrix.
+        """
+
+        if normalize_components:
+            components_norm = self.components / self.components.sum(axis=1)[:, np.newaxis]
+            return self.decomposition @ components_norm
         return self.decomposition @ self.components
     
     
-    # TODO vectorised version, current script takes in the order of seconds to minutes depending on dataset size    
-    @staticmethod
-    def _compute_coherence_umass(components, data_used, num_top_pixels, randomize_data=False):
-        """ Compute the umass coherence for a selected set of topics and raw data. The calculation is performed by selecting
-        the top words of each topic. A default value of 10 words (or bins) is indicated.
-
-        @param num_top_pixel: (int) number of top-words (bins) to select for computing the coherence
-        @param n_topics: (int) number of topics used for LDA decomposition
-        @param topics: (numpy array) list all the topics processed during LDA decomposition
-        @param raw_data: (numpy array) contain the contact vectors for each single cells (previously selected for LDA)
-        @param random: (boolean) indicate whether the data should be randomized (in order to compute a baseline)
-        @return coherence_umass: (numpy array) contain the coherence values computed for each topic
-        """
-
-        num_topics = len(components)
-        coherence_umass = np.zeros((num_topics,))
-        data_frequency = np.sum(data_used, axis=0)
-
-        for n_topic in range(num_topics):
-            topic = components[n_topic, :]
-            if randomize_data:
-                idx = np.random.permutation(topic.shape[0])
-            else:
-                idx = np.argsort(topic, )[::-1]  # return the bin index in descending order
-            top_indices = idx[:num_top_pixels]
-            c_umass = 0
-            for m in range(1, num_top_pixels):
-                for n in range(0, m):
-                    d_mn = np.sum((data_used[:, top_indices[m]] == 1) & (data_used[:, top_indices[n]] == 1))
-                    d_nn = data_frequency[top_indices[n]]
-                    if d_nn > 0:
-                        c_umass += np.log2((d_mn + 10 ** -6) / d_nn)
-            coherence_umass[n_topic] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_umass
-
-        return coherence_umass
-
-
-    # TODO vectorised version, current script takes in the order of seconds to minutes depending on dataset size
-    @staticmethod
-    def _compute_coherence_npmi_cos(components, data_used, num_top_pixels=10, randomize_data=False):
-        """ Compute coherence for a selected set of topics and raw data using two methods. The calculation is based on the
-        normalized pointwise mutual information and is performed by selecting the top words of each topic. A default value
-        of 10 words (or bins) is indicated.
-
-        @param num_top_pixels: (int) number of top-words (bins) to select for computing the coherence
-        @param n_topics: (int) number of topics used for LDA decomposition
-        @param topics: (numpy array) list all the topics processed during LDA decomposition
-        @param raw_data: (numpy array) contain the contact vectors for each single cells (previously selected for LDA)
-        @param random: (boolean) indicate whether the data should be randomized (in order to compute a baseline)
-        @return coherence_npmi: (numpy array) contain the npmi coherence values computed for each topic
-                coherence_cos: (numpy array) contain the coherence values computed for each topic based on cosine similarity
-        """
-
-        num_topics = len(components)
-        coherence_npmi = np.zeros((num_topics,))
-        coherence_cos = np.zeros((num_topics,))
-        n_data = data_used.shape[0]
-        data_frequency = np.sum(data_used, axis=0)
-
-        for k in range(num_topics):
-            topic = components[k, :]
-            if randomize_data is False:
-                idx = np.argsort(topic, )[::-1]  # return the bin index in descending order
-            else:
-                idx = np.random.permutation(topic.shape[0])
-
-            top_idx = idx[:num_top_pixels]
-
-            # compute the NPMI for all pairs of selected bins
-            npmi = np.zeros((num_top_pixels, num_top_pixels))
-            for m in range(num_top_pixels):
-                for n in range(m+1, num_top_pixels):
-                    i, j = top_idx[m], top_idx[n]
-                    co_occurrence = np.sum((data_used[:, i] >= 0.8) & (data_used[:, j] >= 0.8))
-                    p_mn = co_occurrence / n_data
-                    p_nn = data_frequency[idx[n]] / n_data
-                    p_mm = data_frequency[idx[m]] / n_data
-                    if co_occurrence > 0:
-                        pmi = np.log2((p_mn + 10 ** -6) / (p_nn * p_mm))
-                        npmi[m, n] = - pmi / np.log2(p_mn + 10**-6)
-                        npmi[n, m] = npmi[m, n]
-
-            c_npmi = np.sum(npmi[np.triu_indices(num_top_pixels, k=1)])
-            # for each selected bins (top words), compute the norm of the NPMI computed for all the bins (one top bin versus
-            # all). This is required for the calculation of the cosine similarity.
-            norm = np.linalg.norm(npmi, axis=1)
-            c_cos = 0
-            # based on the previous calculation, compute the NPMI and COS coherence
-            for m in range(0, num_top_pixels, 1):
-                for n in range(m + 1, num_top_pixels):
-                    # c_npmi += npmi[m, n]
-                    c_cos += np.dot(npmi[m, :], npmi[n, :]) / (norm[m] * norm[n])
-
-            coherence_cos[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_cos
-            coherence_npmi[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_npmi
-
-        return coherence_cos, coherence_npmi
-
-
     # TODO automatic extraction of threshold from a weights distribution, preferably multiple options
     @staticmethod
     def _extract_threshold(X):
@@ -535,11 +441,95 @@ class DecompositionResult:
     def representativity(self, threshold=None):
         if threshold is None:
             threshold = self._extract_threshold(self.decomposition)
-        return np.mean(self.decomposition > threshold, axis=0)
+        return np.mean(self.decomposition >= threshold, axis=0)
     
+       
+    @staticmethod
+    def _compute_coherence_umass(components, data_used, num_top_pixels=10, randomize_data=False):
+        """
+        """
+
+        num_components = len(components)
+        coherence_umass = np.zeros((num_components,))
+        data_used = np.asarray(data_used)
+        data_used_freq = np.sum(data_used, axis=0)
+
+        EPS = 10**-5    # value of epsilon is kept constant
+
+        for k in range(num_components):
+            comp = components[k, :]
+            if randomize_data:
+                idx = np.random.permutation(comp.shape[0])
+            else:
+                idx = np.argsort(comp)[::-1]
+            idxs_top = idx[:num_top_pixels]
+
+            c_umass = 0
+            for m in range(1, num_top_pixels):
+                for n in range(0, m):
+                    d_mn = np.sum((data_used[:, idxs_top[m]] == 1) & (data_used[:, idxs_top[n]] == 1))
+                    d_nn = data_used_freq[idxs_top[n]]
+                    if d_nn > 0:
+                        c_umass += np.log2((d_mn + EPS) / d_nn)
+            coherence_umass[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_umass
+
+        return coherence_umass
+
+
+    @staticmethod
+    def _compute_coherence_npmi_cos(components, data_used, num_top_pixels=10, randomize_data=False):
+        """
+        Compute coherence of components from a decomposition using Normalized Mutual Pointwise Information (NPMI).
+        """
+
+        num_components = len(components)
+        coherence_npmi = np.zeros((num_components,))
+        coherence_cos = np.zeros((num_components,))
+        data_used = np.asarray(data_used)
+        num_data_used = data_used.shape[0]
+        data_used_freq = np.sum(data_used, axis=0)
+
+        EPS = 10**-5    # value of epsilon is kept constant
+
+        for k in range(num_components):
+            comp = components[k, :]
+            if randomize_data is False:
+                idx = np.argsort(comp)[::-1]  # return the bin index in descending order
+            else:
+                idx = np.random.permutation(comp.shape[0])
+            idxs_top = idx[:num_top_pixels]
+
+            # Compute the NPMI for all pairs of selected bins
+            npmi = np.zeros((num_top_pixels, num_top_pixels))
+            for m in range(num_top_pixels):
+                for n in range(m+1, num_top_pixels):
+                    i, j = idxs_top[m], idxs_top[n]
+                    co_occurrence = np.sum((data_used[:, i] >= 0.75) & (data_used[:, j] >= 0.75))
+                    p_mn = co_occurrence / num_data_used
+                    p_nn = data_used_freq[idx[n]] / num_data_used
+                    p_mm = data_used_freq[idx[m]] / num_data_used
+                    if co_occurrence > 0:
+                        pmi = np.log2((p_mn + EPS) / (p_nn * p_mm))
+                        npmi[m, n] = - pmi / np.log2(p_mn + EPS)
+                        npmi[n, m] = npmi[m, n]
+            c_npmi = np.sum(npmi[np.triu_indices(num_top_pixels, k=1)])
+
+            # For each selected pixel, compute the norm of the NPMI computed for all the pixels (one vs all)
+            # Required for the calculation of the cosine similarity.
+            norm = np.linalg.norm(npmi, axis=1)
+            c_cos = 0
+            for m in range(0, num_top_pixels, 1):
+                for n in range(m + 1, num_top_pixels):
+                    c_cos += np.dot(npmi[m, :], npmi[n, :]) / (norm[m] * norm[n])
+
+            coherence_cos[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_cos
+            coherence_npmi[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_npmi
+
+        return coherence_npmi, coherence_cos
+
 
     # NOTE vectorised version of jb's original code, NEEDS VALIDATION
-    def sort_components(self, threshold=None, return_freqs : bool = False):
+    def sort_components(self, threshold: Number = None, return_freqs: bool = False):
         """
         Sort the components captured from a decomposition by its representativity.
 
@@ -636,19 +626,29 @@ class DecompositionResult:
                                                      data_used=self.data_training,
                                                      num_top_pixels=num_top_pixels,
                                                      randomize_data=False))
-        
+
         return tuple(out)
 
 
-    # TODO t-SNE method, embedding plot with clusters needs to be saved, HDBSCAN parameter handling and model saving
-    def embed_decomposition(self, path_to_save_dir: str, method: str = "UMAP", cluster: bool = False, **kwargs):
-        """Embed the decomposition using Principal Component Analysis (PCA), UMAP, or t-SNE and cluster"""
+    def embed_decomposition(self,
+                            dir_to_save: str,
+                            method: str = "UMAP",
+                            cluster: bool = False,
+                            save_models: bool = True,
+                            **kwargs):
+        """
+        Embed the decomposition in a lower dimensional space using one of several methods and cluster.
 
-        assert isinstance(path_to_save_dir, str) and path.isdir(path_to_save_dir)
+        Parameters
+        --------
+        """
+
+        assert isinstance(dir_to_save, str) and path.isdir(dir_to_save)
         assert isinstance(method, str)
         assert isinstance(cluster, bool)
 
         method = method.strip().lower()
+        assert method in ["pca", "umap", "tsne"]
         method_label = method.upper()   # for labeling method in plots and DataFrame columns
 
         num_components_embedding = kwargs.get("num_components", 2)
@@ -687,11 +687,17 @@ class DecompositionResult:
             reducer = PCA(n_components=2, random_state=42)
             embedding = reducer.fit_transform(self.decomposition)
 
+        else:
+            reducer = TSNE(n_components=2, random_state=42)
+            embedding = reducer.fit_transform(self.decomposition)
+
+        # Saving the embedding model as joblib file
+        if save_models:
+            jl.dump(reducer, path.join(dir_to_save, f"model_embedding_decomposition_{method}.jl"))
+
         # Prepare df for plotting
         embedding_df = pd.DataFrame(embedding, columns=[f"{method_label}_{i}" \
                                                         for i in range(1, num_components_embedding+1)])
-        # Saving the model as joblib file
-        jl.dump(reducer, path.join(path_to_save_dir, f"model_decomposition_{method}.jl"))
 
         # Plotting the results
         fig, ax = plt.subplots()
@@ -704,7 +710,7 @@ class DecompositionResult:
                 ax=ax)
         ax.set_title(method)
         fig.tight_layout()
-        fig.savefig(path.join(path_to_save_dir, f"embedding_decomposition_{method}.png"), dpi=300)
+        fig.savefig(path.join(dir_to_save, f"embedding_decomposition_{method}.png"), dpi=300)
         plt.close(fig)
         
         if cluster:
@@ -723,6 +729,10 @@ class DecompositionResult:
             )
             clusterer = clusterer.fit(embedding)
             embedding_df["cluster"] = clusterer.labels_
+
+            # Saving the clusterer model as joblib file
+            if save_models:
+                jl.dump(clusterer, path.join(dir_to_save, f"model_embedding_decomposition_{method}_clusterer.jl"))
 
             clusters_unique = sorted(list(np.unique(clusterer.labels_).astype(int)))
             clusters_unique.append(clusters_unique.pop(0))
@@ -758,7 +768,7 @@ class DecompositionResult:
                         fontsize=10, weight='bold', ha='center', va='center', color='black',
                         bbox=dict(facecolor='white', alpha=0.6, boxstyle='round,pad=0.3'))
             plt.tight_layout()
-            plt.savefig(path.join(path_to_save_dir, f"embedding_decomposition_{method}_clustered.png"), dpi=300)
+            plt.savefig(path.join(dir_to_save, f"embedding_decomposition_{method}_clustered.png"), dpi=300)
             plt.close()
 
         return embedding_df

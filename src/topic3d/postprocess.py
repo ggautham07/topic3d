@@ -3,7 +3,7 @@
 Methods for the post-processing of topic decomposition results (:mod:`topic3d.postprocess`)
 =====================================================
 
-.. authors:: jbfiche, gsgautham98, marcnol
+.. authors:: jbfiche, ggautham07, marcnol
 
 Function reference
 ------------------
