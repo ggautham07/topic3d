@@ -21,15 +21,14 @@ import h5py
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import squareform, pdist
-import seaborn as sns
 from sklearn.decomposition import LatentDirichletAllocation
-import matplotlib.pyplot as plt
 from itertools import combinations
 from collections import OrderedDict
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import joblib as jl
 from .datatypes import CoordsArrayStack, PairwiseArrayStack
+from . import visualization as viz
 import warnings
 
 
@@ -149,7 +148,8 @@ class RawData:
     # TODO path_to_file can also take a list of files with the same extension/format, and merge the data
     # original code version for combining multiple files written by Marcelo only works for FOF files
     def load(self, path_to_file:str, extract_items:bool = True):
-        """ Open a trace file; can either be a FOF-CT trace core file or a Numpy file.
+        """
+        Open a trace file; can either be a FOF-CT trace core file or a Numpy file.
         Former will be formatted as a pandas dataframe.
         @param file_path: (str) path to the file
         @return: data: (pd dataframe) contains the XYZ localizations and barcode positions for all localizations
@@ -270,8 +270,9 @@ class RawData:
         return results
     
 
-    def _compute_inter_loci_genomic_dist(self):
-        """ Compute the genomic distance separating two consecutive barcodes (from the experiment)
+    def compute_inter_loci_genomic_dist(self):
+        """
+        Compute the genomic distance separating two consecutive barcodes (from the experiment)
 
         @param lib: (pandas dataframe) coordinates of the barcodes
         @param n_bins: (int) total number of barcodes of the library
@@ -290,7 +291,8 @@ class RawData:
 
 
 class ProcessedData:
-    """ Handler for processed data, both loading and saving
+    """
+    Handler for processed data, both loading and saving
     
     Methods for plotting, computations can only be performed on RawData objects or separately using array functions
     
@@ -332,32 +334,17 @@ class ProcessedData:
         attr_labels = [attr for attr in dir(self) if not callable(getattr(self, attr)) and not attr.startswith("__")]
         print(attr_labels)
         with h5py.File(path_to_file, mode="w") as handler:
-            for al in attr_labels:
-                attr = getattr(self, al)
+            for atlab in attr_labels:
+                attr = getattr(self, atlab)
                 try:
-                    print(al, type(attr), attr.dtype)
-                    handler.create_dataset(name=al, data=attr)
-                    print(f"Saved {al} successfully")
+                    print(atlab, type(attr), attr.dtype)
+                    handler.create_dataset(name=atlab, data=attr)
+                    print(f"Saved {atlab} successfully")
                 except AttributeError:
                     pass
                 except TypeError:
-                    handler.attrs[al] = attr
-                    print(f"Saved {al} successfully as attribute")
-    
-
-    def plot_contacts_avg(self, threshold):
-        contacts = np.where(np.isnan(self.pwds), np.nan, self.pwds < threshold)
-        contacts_ensemble = squareform(np.nanmean(contacts, axis=0))
-        np.fill_diagonal(contacts_ensemble, 1)
-        vmin = np.nanmin(contacts_ensemble)
-        vmax = np.quantile(contacts_ensemble, 0.99)
-        if np.isnan(vmax):
-            vmax = np.nanmax(contacts_ensemble)
-        plt.figure(figsize=(8, 6))
-        im = plt.imshow(contacts_ensemble, cmap="Reds", vmin=vmin, vmax=vmax)
-        plt.colorbar(label="contact freq")
-        plt.tight_layout()
-        return im
+                    handler.attrs[atlab] = attr
+                    print(f"Saved {atlab} successfully as attribute")
     
 
     # TODO NOTE standardise use of sns for all plots to maintain consistency
@@ -564,13 +551,15 @@ class DecompositionResult:
 
     # TODO returning mean divergence for decomposition, sorting the matrix by least to most distant?
     def divergence(self, path_to_save:str = None):
-        """Compute the Jensen-Shannon divergence between each pair of components captured from a training
+        """
+        Compute the Jensen-Shannon divergence between each pair of components captured from a training
         and prepare a pairwise matrix plot if `path_to_save` is provided
         """
 
         pw_divergence = pdist(self.components, metric="jensenshannon")
         
         if path_to_save is not None:
+            import matplotlib.pyplot as plt
             assert isinstance(path_to_save, str)
             assert path_to_save.endswith((".svg", ".png"))
             pw_divergence = squareform(pw_divergence)
@@ -628,6 +617,33 @@ class DecompositionResult:
                                                      randomize_data=False))
 
         return tuple(out)
+    
+
+    def plot_components(self, path_to_save: str, cmap: str = "Reds", common_cbar: bool = False):
+        """
+        Plot the componets from a topic decomposition.
+
+        Parameters
+        --------
+        """
+        
+        fig = viz.plot_grid_2d_squares(self.components, titles=[f"T{i}" for i in range(self.num_components)],
+                                       cmap=cmap, common_cbar=common_cbar, cbar_label="pseudocount")
+
+        return fig
+    
+
+    # TODO
+    def plot_decomposition(self, cmap: str = "Reds"):
+        # fig = plt.figure(figsize=(10, 10))
+        # ax = fig.add_subplot(1, 1, 1)
+        # sns.heatmap(lda_decomposition_ordered, cmap="coolwarm", ax=ax)
+        # ax.get_xaxis().set_visible(False)
+        # ax.get_xaxis().set_visible(True)
+        # saving_filename = path.join(training_path, f'topic_decomposition.png')
+        # plt.savefig(saving_filename, dpi=150, bbox_inches='tight')
+        # plt.close(fig)
+        return
 
 
     def embed_decomposition(self,
@@ -646,6 +662,9 @@ class DecompositionResult:
         assert isinstance(dir_to_save, str) and path.isdir(dir_to_save)
         assert isinstance(method, str)
         assert isinstance(cluster, bool)
+
+        import matplotlib.pyplot as plt
+        import seaborn as sns
 
         method = method.strip().lower()
         assert method in ["pca", "umap", "tsne"]
@@ -714,6 +733,9 @@ class DecompositionResult:
         plt.close(fig)
         
         if cluster:
+
+            import hdbscan
+
             # HDBSCAN parameters for the pooled components
             min_cluster_size = kwargs.get("min_cluster_size", self.decomposition.shape[0] // 40)
             min_samples = kwargs.get("min_samples", 1)

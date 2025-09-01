@@ -15,6 +15,7 @@ import pandas as pd
 from pathlib import Path
 from numbers import Number
 
+
 ########################
 
 def _equilen_bins(start, end, num_bins):

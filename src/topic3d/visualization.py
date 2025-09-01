@@ -13,16 +13,25 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.distance import squareform, pdist
 from scipy.stats import fisher_exact
+import math
+
 import matplotlib.pyplot as plt
 import matplotlib.transforms as transforms
 from matplotlib.patches import Patch, Polygon
 import matplotlib.patheffects as patheffects
+from matplotlib.axes import Axes
+from matplotlib import rcParams
 import seaborn as sns
+from PIL import Image
+
 from os import path
 from typing import Dict, List, Tuple
 from collections import Counter
-import math
-from PIL import Image
+
+# Setting global matplotlib parameters
+# TODO change all properties that have a global same value (or most of the time)
+rcParams["savefig.dpi"] = 300
+rcParams["figure.dpi"] = 300
 
 
 def _get_grid_num_rows_cols(num_items):
@@ -40,7 +49,8 @@ def _get_grid_num_rows_cols(num_items):
     return nrows, ncols
 
 
-def plot_line(x, y, path_to_save, xlabel="", ylabel="", **kwargs):
+# TODO add possibility of passing x, y pairs as parameters so that multiple lines can be plotted on the same axis
+def plot_line(x, y, xlabel="", ylabel="", **kwargs):
     """
     Create a figure and axis object, and plot the data in a manuscript-ready graphic and format
 
@@ -50,8 +60,6 @@ def plot_line(x, y, path_to_save, xlabel="", ylabel="", **kwargs):
         points along the x-axis
     y : Iterable
         points along the y-axis
-    path_to_save : 
-
     """
 
     properties = kwargs.copy()
@@ -69,139 +77,43 @@ def plot_line(x, y, path_to_save, xlabel="", ylabel="", **kwargs):
     ax.set_ylabel(ylabel, fontsize=36, fontweight=400, labelpad=30)
     sns.lineplot(x=x, y=y, ax=ax, **properties)
     plt.tight_layout()
-    fig.savefig(path_to_save)
     
-    return fig
+    return fig, ax
 
 
-def plot_2d_triangle(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=" "):
-    """ Plot a 2D matrix as a triangular matrix with a colorbar
-    
-    Parameters
-    --------
-    path_to_save : str
-        path to save the image, image type is taken based on the extension
-    cmap : 
-        colormap for the plot (default: Reds)
-    label : str
-        label for the colorbar (default: )
+# TODO finish setting ticks, labels and colours in manuscript-ready format
+# TODO change setting from dict to x, y pairs as parameters so that multiple bar plots can be plotted on the same axis
+def plot_bar(data:dict, xlabel="", ylabel="", **kwargs):
+    """
+    Create a figure and axis object, and plot the data in a manuscript-ready graphic and format
     """
 
-    # Take only upper triangle by masking the lower one
-    data = squareform(matrix) if matrix.ndim == 1 else matrix[:]
-    lower = np.tril(data, k=-1)
-    mask = np.tril(np.ones_like(data, dtype=bool), k=-1)
-    data_masked = np.where(mask, lower, np.nan)
-    num_bc = data_masked.shape[0]
+    properties = kwargs.copy()
 
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8.5, 6), constrained_layout=True)
+    fig, ax = plt.subplots()
+    fig.set_figwidth(max(data["barcode_id"]) // 2.25)
+    fig.set_figheight(9)
+    ax.tick_params(axis="x", labelsize=30, which="major", pad=16, direction="in", length=8, width=1.1)
+    ax.tick_params(axis="x", labelsize=22, which="minor", pad=16, direction="in", length=4, width=1)
+    ax.tick_params(axis="y", labelsize=30, which="major", pad=16, direction="in", length=8, width=1.1)
+    ax.tick_params(axis="y", labelsize=22, which="minor", pad=16, direction="in", length=4, width=1)
+    ax.tick_params(which="both", bottom=True, top=True, left=True, right=True)
+    ax.tick_params(labelbottom=True, labeltop=False, labelleft=True, labelright=False)
+    ax.set_xlabel(xlabel, fontsize=36, fontweight=400, labelpad=28)
+    ax.set_ylabel(ylabel, fontsize=36, fontweight=400, labelpad=30)
+    axbar = sns.barplot(data=data,
+                        x="barcode_id",
+                        y="efficiency",
+                        estimator="sum",
+                        errorbar=None,
+                        ax=ax,
+                        **properties)
+    axbar.bar_label(axbar.containers[0], fontsize=14)
+    axbar.set_xlabel(xlabel)
+    axbar.set_ylabel(ylabel)
 
-    # Plot with pcolormesh (preferred over imshow for rotation)
-    X, Y = np.meshgrid(np.arange(num_bc+1), np.arange(num_bc+1))
-    pc = ax.pcolormesh(X, Y, data_masked, cmap=cmap, shading="auto")
-
-    # Create a 45° rotation transform around center of the data and apply
-    trans = transforms.Affine2D().rotate_deg_around(num_bc//2, num_bc//2, -45)
-    pc.set_transform(trans + ax.transData)
-
-    # Adjust axis limits to fit rotated content
-    xf = 0.22 * num_bc
-    yf = 0.46 * num_bc
-    ax.set_xlim(-xf, num_bc+xf)
-    ax.set_ylim(yf, num_bc*1.2)
-    ax.set_aspect("equal")
-    ax.axis("off")
-    
-    # TODO align it to the triangle edge
-    cb = fig.colorbar(pc, shrink=0.75, aspect=20, orientation="horizontal")
-    cb.ax.yaxis.set_label_position("right")
-    cb.ax.yaxis.set_ticks_position("left")
-    cb.set_label(label=label, labelpad=16, fontsize=20,)
-    min_val = np.nanmin(data_masked)
-    max_val = np.nanmax(data_masked)
-    mid_val = (max_val + min_val) / 2
-    cb.set_ticks(ticks=[min_val, mid_val, max_val],
-                labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
-                fontsize=22)
-    
-    fig.savefig(path_to_save)
-    plt.close(fig)
-
-
-
-def plot_2d_square(matrix:np.ndarray, path_to_save:str, cmap="Reds", label=""):
-    """ Plot a 2D matrix as a square symmetric matrix with a colorbar
-    
-    Parameters
-    --------
-    path_to_save : str
-        path to save the image, image type is taken based on the extension
-    cmap : str
-        colormap for the plot (default: Reds)
-    label : str
-        label for the colorbar (default: )
-    """
-
-    # Take only upper triangle by masking the lower one
-    data = squareform(matrix) if matrix.ndim == 1 else matrix[:]
-    num_bc = data.shape[0]
-
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6, 6), constrained_layout=True)
-
-    # # Plot with pcolormesh (preferred over imshow for rotation)
-    # X, Y = np.meshgrid(np.arange(num_bc+1), np.arange(num_bc+1))
-    # pc = ax.pcolormesh(X, Y, data, cmap=cmap, shading="auto")
-
-    pc = ax.imshow(data, cmap=cmap)
-
-    ax.set_aspect("equal")
-    ax.axes.xaxis.set_visible(False)
-    ax.axes.yaxis.set_visible(False)
-
-
-    cb = fig.colorbar(pc, shrink=0.75, aspect=20, orientation="horizontal")
-    cb.ax.yaxis.set_label_position("right")
-    cb.ax.yaxis.set_ticks_position("left")
-    cb.set_label(label=label, labelpad=16, fontsize=20,)
-    cb.set_ticks(ticks=[data.min(), data.min()+data.max()/2, data.max()],
-                labels=[f"{data.min():.2f}", f"{(data.min()+data.max())/2:.2f}", f"{data.max():.2f}"],
-                fontsize=22)
-    
-    fig.savefig(path_to_save)
-    plt.close(fig)
-
-
-def plot_2d_square_grid(matrices, titles, path_to_save:str, common_colorbar: bool = False, cmap="Reds", label=""):
-
-    from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
-
-    dratio = 3
-    num_rows, num_cols = _get_grid_num_rows_cols(len(matrices))
-    fig, axes = plt.subplots(num_rows, num_cols)
-    fig.set_figwidth(num_rows * dratio)
-    fig.set_figheight(num_cols * dratio)
-    if common_colorbar:
-        fig.subplots_adjust(bottom=0.8)
-        cbar_ax = fig.add_axes([0.1, 0.01, 0.8, 0.03]) 
-    fig.set_layout_engine("tight")
-    for i, ax, matrix in zip(range(len(matrices)), axes.flat, matrices):
-        matrix = squareform(matrix) if matrix.ndim == 1 else matrix[:]
-        im = sns.heatmap(matrix, cmap=cmap, ax=ax, cbar=True, cbar_ax=cbar_ax if common_colorbar else None, square=True)
-        ax.set_title(f"{titles[i]}", fontsize=12, y=1.02)
-        m, n = matrix.shape[0], matrix.shape[1]
-        ax.set_xticks(np.arange(0, m, 10, dtype=int))
-        ax.set_xticks(np.arange(0.5, m, 1), minor=True)
-        ax.set_yticks(np.arange(0, n, 10, dtype=int))
-        ax.set_yticks(np.arange(0.5, n, 1), minor=True)
-        ax.tick_params(which="minor", bottom=False, left=False)
-    fig.savefig(path_to_save, dpi=300, bbox_inches="tight")
-    
     return fig
 
-
-
-
-##################### FROM JB and MARCELO #######################
 
 # ---------------------------------------------------------------------------
 #  Configuration constants
@@ -259,7 +171,7 @@ def _edge_type(i: int, j: int, ctcf: set[int], cre: set[int]) -> str:
     return "other"
 
 
-def odds_ratio_matrix(mat: np.ndarray, locus_dict: Dict, bright_q: float = BRIGHT_Q
+def _odds_ratio_matrix(mat: np.ndarray, locus_dict: Dict, bright_q: float = BRIGHT_Q
                       ) -> Dict[str, Tuple[float, float]]:
     """Return **odds ratio and p‑value** for every *EDGE_TYPES* category.
 
@@ -524,30 +436,210 @@ def _add_gene_legend(ax, loci_dict, location='outside', anchor=(1.05, 1), fontsi
     return ax
 
 
-# def plot_decomposition(LDA_decomposition, n_topics, training_path):
-#     """ Plot a graph illustrating the representativity of each topic for the decompositions
+def _plot_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines: bool = True):
+    """Helper that draws a matrix as a rotated lower triangle heatmap on an existing matplotlib Axis object."""
 
-#     @param LDA_decomposition:
-#     @param n_topics:
-#     @param training_path:
-#     @return:
-#     """
-#     lda_decomposition_ordered = np.empty((0, n_topics), dtype=int)
-#     idx = np.argmax(LDA_decomposition, axis=1)
-#     for n_topic in range(n_topics):
-#         selection = LDA_decomposition[idx == n_topic, :]
-#         sorted_selection_idx = np.argsort(selection[:, n_topic])[::-1]  # sort them is descending order
-#         lda_decomposition_ordered = np.concatenate((lda_decomposition_ordered, selection[sorted_selection_idx, :]),
-#                                                    axis=0)
+    num_bins = matrix.shape[0]
+    mask = np.triu(np.ones_like(matrix, dtype=bool))
+    matrix_masked = np.ma.masked_array(matrix, mask=~mask)
 
-#     fig = plt.figure(figsize=(10, 10))
-#     ax = fig.add_subplot(1, 1, 1)
-#     sns.heatmap(lda_decomposition_ordered, cmap="coolwarm", ax=ax)
-#     ax.get_xaxis().set_visible(False)
-#     ax.get_xaxis().set_visible(True)
-#     saving_filename = path.join(training_path, f'topic_decomposition.png')
-#     plt.savefig(saving_filename, dpi=150, bbox_inches='tight')
-#     plt.close(fig)
+    im = ax.imshow(matrix_masked, origin="lower", cmap=cmap, interpolation="none")
+    # rotate ‑45° so that the matrix diagonal becomes the base of a triangle
+    trans = transforms.Affine2D().rotate_deg(-45).scale(1/ math.sqrt(2), -1/ math.sqrt(2)) + ax.transData
+    im.set_transform(trans)
+    # clip to triangle
+    coords = np.array([[-0.5, 0], [num_bins, 0], [num_bins / 2, num_bins / math.sqrt(2)]])
+    triangle = Polygon(coords, closed=True, transform=ax.transData)
+    im.set_clip_path(triangle)
+    # setting axis limits
+    xf = 0.03 * num_bins
+    yf = -0.25 * num_bins
+    ax.set_xlim(-xf, num_bins+xf)
+    ax.set_ylim(yf, num_bins*0.5)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    return im
+
+
+# TODO use below function to plot any number of subplots
+def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label=""):
+    """
+    Plot a 2D matrix as a triangular matrix with a colorbar
+    
+    Parameters
+    --------
+    matrix : numpy.ndarray
+        matrix to plot
+    cmap : 
+        colormap for the plot (default: Reds)
+    label : str
+        label for the colorbar (default: )
+    """
+
+    # Take only upper triangle by masking the lower one
+    data = squareform(matrix) if matrix.ndim == 1 else matrix[:]
+    lower = np.tril(data, k=-1)
+    mask = np.tril(np.ones_like(data, dtype=bool), k=-1)
+    data_masked = np.where(mask, lower, np.nan)
+    # Values computed to be used in colorbar
+    min_val = np.nanmin(data_masked)
+    max_val = np.nanmax(data_masked)
+    mid_val = (max_val + min_val) / 2
+    num_bc = data_masked.shape[0]
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 6), constrained_layout=True, dpi=300)
+    im = _plot_2d_tri_map(data, ax=ax, cmap=cmap)    # image generated through internal routine
+
+    axpos = ax.get_position()
+    cax = fig.add_axes([0.1, axpos.y0 * 1.45, axpos.width, axpos.height * 0.075])
+    cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
+    cbar.ax.yaxis.set_label_position("right")
+    cbar.ax.yaxis.set_ticks_position("left")
+    cbar.set_ticks(ticks=[min_val, mid_val, max_val],
+                   labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
+                   fontsize=26)
+    cbar.ax.set_xlabel(cbar_label, fontsize=22, labelpad=16)    # "Pseudocount", fontsize=font_info["tick_label"]
+    cbar.outline.set_visible(False)
+    # Add barcode labels and other annotations  # TODO
+    # ax.text(0.5, 0.55,
+    #         f"Sample",
+    #         transform=ax.transAxes,
+    #         ha="center", va="bottom",
+    #         fontsize=28, fontweight="bold")
+    # tick_dict = parse_locus_labels(locus_dict, lib)
+    # ax = _annotate_labels(ax, tick_dict, locus_dict, lib,
+    #                      fontsize=font_info["tick_label"],
+    #                      line_sep=line_sep)
+    # _add_gene_legend(ax, locus_dict,
+    #                 location="outside", anchor=(0, 0.5),
+    #                 fontsize=font_info["legend"])
+
+    return fig
+
+
+# TODO move main plotting code to a helper function; use below function to plot any number of subplots
+def plot_matrix_square(matrix:np.ndarray, cmap="Reds", label=""):
+    """ Plot a 2D matrix as a square symmetric matrix with a colorbar
+    
+    Parameters
+    --------
+    matrix : numpy.ndarray
+        matrix to plot
+    cmap : str
+        colormap for the plot (default: Reds)
+    label : str
+        label for the colorbar (default: )
+    """
+
+    # Take only upper triangle by masking the lower one
+    data = squareform(matrix) if matrix.ndim == 1 else matrix[:]
+    num_bc = data.shape[0]
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6, 6), constrained_layout=True)
+    pc = ax.imshow(data, cmap=cmap)
+    ax.set_aspect("equal")
+    ax.axes.xaxis.set_visible(False)
+    ax.axes.yaxis.set_visible(False)
+    cb = fig.colorbar(pc, shrink=0.75, aspect=20, orientation="horizontal")
+    cb.ax.yaxis.set_label_position("right")
+    cb.ax.yaxis.set_ticks_position("left")
+    cb.set_label(label=label, labelpad=16, fontsize=20,)
+    cb.set_ticks(ticks=[data.min(), data.min()+data.max()/2, data.max()],
+                labels=[f"{data.min():.2f}", f"{(data.min()+data.max())/2:.2f}", f"{data.max():.2f}"],
+                fontsize=22)
+
+    return fig
+
+
+# TODO proper plot for a common colorbar
+def plot_grid_2d_squares(matrices, titles=[],
+                         cmap="Reds", common_cbar: bool = False, cbar_label=""):
+    """
+    Plot a tightly-spaced grid of matrices with or without a common colorbar in a square form.
+
+    Used for plotting examples of pairwise proximity of contact matrices, components from topic decomposition and their
+    comparisons. The number of rows and columns are automatically detected to have a square layout.
+
+    Parameters
+    --------
+    matrices : list
+        list of matrices to plot
+    
+    Returns
+    --------
+    fig : matplotlib.Figure
+        Figure object after saving the plot
+    """
+
+    from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+
+    dratio = 3
+    num_rows, num_cols = _get_grid_num_rows_cols(len(matrices))
+    fig, axs = plt.subplots(num_rows, num_cols)
+    fig.set_figwidth(num_rows * dratio)
+    fig.set_figheight(num_cols * dratio)
+    if common_cbar:
+        fig.subplots_adjust(bottom=0.8)
+        cbar_ax = fig.add_axes([0.1, 0.01, 0.8, 0.03]) 
+    fig.set_layout_engine("tight")
+    for i, ax, matrix in zip(range(len(matrices)), axs.flat, matrices):
+        matrix = squareform(matrix) if matrix.ndim == 1 else matrix[:]
+        im = sns.heatmap(matrix,
+                         cmap=cmap,
+                         ax=ax,
+                         cbar=True,
+                         cbar_ax=cbar_ax if common_cbar else None,
+                         square=True)
+        ax.set_title(f"{titles[i]}", fontsize=12, y=1.02)
+        m, n = matrix.shape[0], matrix.shape[1]
+        ax.set_xticks(np.arange(0, m, 10, dtype=int))
+        ax.set_xticks(np.arange(0.5, m, 1), minor=True)
+        ax.set_yticks(np.arange(0, n, 10, dtype=int))
+        ax.set_yticks(np.arange(0.5, n, 1), minor=True)
+        ax.tick_params(which="minor", bottom=False, left=False)
+    
+    return fig
+
+
+# TODO complete script, proper plot for a common colorbar
+def plot_grid_2d_triangles(matrices, titles=[],
+                           cmap="Reds", common_cbar: bool = False, cbar_label=""):
+    """
+    Plot a tightly-spaced grid of matrices with or without a common colorbar in a triangular form.
+
+    Used for plotting examples of pairwise proximity of contact matrices, components from topic decomposition and their
+    comparisons. The number of rows and columns are automatically detected to have a square layout.
+
+    Parameters
+    --------
+    matrices : list
+        list of matrices to plot
+    
+    Returns
+    --------
+    fig : matplotlib.Figure
+        Figure object after saving the plot
+    """
+
+    matrices = [squareform(matrix) if matrix.ndim==1 else matrix[:] for matrix in matrices]
+    
+    f = 3
+    nrows, ncols = _get_grid_num_rows_cols(len(matrices))
+    print(nrows, ncols)
+    
+    fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(nrows*f, ncols*f), constrained_layout=True, dpi=300)
+
+    for matrix, ax in zip(matrices, axs.flat):
+    
+        lower = np.tril(matrix, k=-1)
+        mask = np.tril(np.ones_like(matrix, dtype=bool), k=-1)    # take only upper triangle by masking the lower one
+        matrix_masked = np.where(mask, lower, np.nan)
+        num_bc = matrix_masked.shape[0]
+
+    # TODO 
+
+    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -623,40 +715,6 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
     plt.close(fig)
 
 
-# ---------------------------------------------------------------------------
-#  Internal plotting routine (unchanged geometry, but made private)          
-# ---------------------------------------------------------------------------
-
-def _plot_triangular_matrix(topic: np.ndarray, ax=None, cmap: str = "Reds"):
-    """Helper that draws *topic* as a rotated lower‑triangle heat‑map."""
-    import matplotlib.patches as patches
-
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 10))
-
-    n_bins = topic.shape[0]
-    mask = np.triu(np.ones_like(topic, dtype=bool))
-    topic_masked = np.ma.masked_array(topic, mask=~mask)
-
-    im = ax.imshow(topic_masked, origin="lower", cmap=cmap, interpolation="none")
-
-    # rotate ‑45° so that the matrix diagonal becomes the base of a triangle
-    trans = transforms.Affine2D().rotate_deg(-45).scale(1/ math.sqrt(2), -1/ math.sqrt(2)) + ax.transData
-    im.set_transform(trans)
-
-    # clip to triangle
-    coords = np.array([[-0.5, 0], [n_bins, 0], [n_bins / 2, n_bins / math.sqrt(2)]])
-    triangle = Polygon(coords, closed=True, transform=ax.transData)
-    im.set_clip_path(triangle)
-
-    ax.set_xlim(-1, n_bins)
-    ax.set_ylim(0, n_bins)
-    ax.set_aspect("equal")
-    ax.axis("off")
-
-    return im
-
-
 def combine_images(columns, space, images, output_path='image.png'):
     rows = len(images) // columns + (len(images) % columns > 0)
     width_max = max(Image.open(image).width for image in images)
@@ -682,7 +740,7 @@ def combine_images(columns, space, images, output_path='image.png'):
     print(f"Saved combined image to: {output_path}")
 
 
-def plot_traces_3d_simple(path_to_save: str, traces: np.ndarray, use_one_ax=False):
+def plot_traces_3d_simple(traces: np.ndarray, use_one_ax=False):
     """
     Plot up to fifty traces as simple graphs in 3D
     """
@@ -704,10 +762,18 @@ def plot_traces_3d_simple(path_to_save: str, traces: np.ndarray, use_one_ax=Fals
     plt.rcParams["ytick.labelsize"] = 18
     fd = {"fontfamily": "sans-serif", "fontsize": 20}
 
-    fig, axes = plt.subplots(nrows=nr, ncols=nc, subplot_kw=dict(projection="3d"))
+    # # To set local rcParams
+    # with plt.rc_context({"axes.grid": True, "grid.linewidth": 0.75}):
+    #     f, ax = plt.subplots()  # Will make a figure with a grid
+    #     ax.plot(x, y)
+
+    # f, ax = plt.subplots()  # Will make a figure without a grid
+    # ax.plot(x, y)
+
+    fig, axs = plt.subplots(nrows=nr, ncols=nc, subplot_kw=dict(projection="3d"))
     fig.set_figwidth(f * nr)
     fig.set_figheight(f * nc)
-    for ax, n in zip(axes.flat if nr > 1 else [axes], range(num_traces)):
+    for ax, n in zip(axs.flat if nr > 1 else [axs], range(num_traces)):
         x, y, z = zip(*traces[n])
         ax.scatter(x, y, z, s=70, marker="o")
         ax.plot(x, y, z, linestyle="-", linewidth=1.25)
@@ -716,7 +782,6 @@ def plot_traces_3d_simple(path_to_save: str, traces: np.ndarray, use_one_ax=Fals
         ax.set_xlabel("X-axis", labelpad=15, fontdict=fd)
         ax.set_ylabel("Y-axis", labelpad=15, fontdict=fd)
         ax.set_zlabel("Z-axis", labelpad=15, fontdict=fd)
-    plt.tight_layout()
-
-    fig.savefig(path_to_save, dpi=300)
-    plt.close(fig)
+    fig.set_layout_engine("tight")
+    
+    return fig

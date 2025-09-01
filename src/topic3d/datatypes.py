@@ -14,14 +14,18 @@ Class reference
 # IMPORTS
 # =============================================================================
 
-from numbers import Number
+from os import path
+import warnings
 from typing import Iterable
+from numbers import Number
+
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import squareform, pdist
 from scipy.linalg import issymmetric
-import warnings
-from . import visualization
+
+import matplotlib.pyplot as plt
+from . import visualization as viz
 
 
 
@@ -176,7 +180,7 @@ class CoordsArrayStack(np.ndarray):
         effs = np.around(np.mean(is_detected, axis=0 if by=="barcode" else 1) * 100, decimals=2)
 
         return effs
-    
+
 
     def filter(self, min_efficiency=60, by="item"):
         """
@@ -233,12 +237,12 @@ class CoordsArrayStack(np.ndarray):
             warnings.warn("No NaNs to impute in the stack")
             return self
         
-        stack_imputed = np.copy(self)
+        stack_imp = np.copy(self)
         
         if method == "naive":
             neighbor_means = (self[:, 2:] + self[:, :-2]) / 2   # compute the mean pos of all potential neighbors
-            is_missing = np.isnan(stack_imputed[:, 1:-1])   # check missing coordinates
-            stack_imputed[:, 1:-1][is_missing] = neighbor_means[np.where(is_missing)]   # replace NaNs with mean pos
+            is_missing = np.isnan(stack_imp[:, 1:-1])   # check missing coordinates
+            stack_imp[:, 1:-1][is_missing] = neighbor_means[np.where(is_missing)]   # replace NaNs with mean pos
 
         elif method == "jost":
             # needs the mean-squared pairwise distance matrix, regularized
@@ -246,7 +250,7 @@ class CoordsArrayStack(np.ndarray):
             pwds_mean2 = PairwiseArrayStack._regularize_pairwise_square_matrix(pwds_mean2)
             assert pwds_mean2.ndim == 2
             for n in range(self.num_items):
-                tr = stack_imputed[n][:]
+                tr = stack_imp[n][:]
                 assert tr.shape[-1] == 3
                 assert pwds_mean2.shape[0] == self.num_bc
                 # missing positions
@@ -289,13 +293,42 @@ class CoordsArrayStack(np.ndarray):
                 std = np.sqrt(np.diag(sigcond))
                 # final inferred coordinates and the error
                 inf_coords = np.squeeze(np.concatenate((x_missing.T, y_missing.T, z_missing.T), axis=1))
-                std_xyz = np.array([std, std, std])
+                std_xyz = np.asarray([std, std, std])
                 # replace missing coordinates with the inferred ones
                 tr[missing_idxs,:] = inf_coords
-                stack_imputed[n] = tr[:]
+                stack_imp[n] = tr[:]
 
-        stack_imputed = CoordsArrayStack(stack_imputed)
-        return stack_imputed
+        stack_imp = CoordsArrayStack(stack_imp)
+
+        return stack_imp, std_xyz
+
+
+    # TODO add kwargs where necessary
+    def plot_barcode_efficiency(self, path_to_save: str = "", include_imputed: bool = False):
+        """
+        Plot efficiency properties for the selected dataset
+        @param barcode_efficiency: (pandas dataframe) contains barcodes id and the average efficiency for each of them
+        @param raw_efficiency: (numpy array) efficiency for each raw trace
+        @param imputed_efficiency: (numpy array) efficiency for each imputed trace
+        @param saving_path: (str) path where to save the plot
+        """
+
+        assert isinstance(path_to_save, str)
+        wflag = False
+        if len(path_to_save.strip()) > 0:
+            wflag = True
+
+        effs = self.efficiency(by="barcode")
+        if include_imputed:
+            stack_imp = self.impute(method="naive")
+            effs_imp = stack_imp.efficiency(by="barcode")
+
+        fig = viz.plot_bar(data=[effs, effs_imp], xlabel="Barcode #", ylabel="Efficiency")
+
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
 
 
 ########################################################################
@@ -303,7 +336,8 @@ class CoordsArrayStack(np.ndarray):
 
 
 class PairwiseArrayStack(np.ndarray):
-    """ A stack of pairwise distance vectors (1D) with utilities for covariance inference,
+    """
+    A stack of pairwise distance vectors (1D) with utilities for covariance inference,
     matrix regularization, and visualization. Used to represent and process collections of intra-trace 
     pairwise distances in chromatin tracing or polymer modeling.
 
@@ -444,7 +478,7 @@ class PairwiseArrayStack(np.ndarray):
         
         cov = PairwiseArrayStack._make_pairwise_square_matrix_symmetric(cov)
         return cov
-    
+
 
     @staticmethod
     def _D2_matrix_from_cov(cov:np.ndarray) -> np.ndarray:
@@ -583,7 +617,7 @@ class PairwiseArrayStack(np.ndarray):
         assert np.all(np.logical_and(idxs >= 0, idxs < matrix.shape[0]))
 
         return matrix[:,idxs][idxs]
-    
+
 
     def efficiency(self, by: str = "pixel"):
         """
@@ -592,7 +626,7 @@ class PairwiseArrayStack(np.ndarray):
         Parameters
         ----------
         by : str
-            "pixel" for per-bin efficiency, "item" for whole matrices.
+            "pixel" for per-pixel efficiency through the stack, "item" for whole matrices.
 
         Returns
         -------
@@ -630,12 +664,12 @@ class PairwiseArrayStack(np.ndarray):
 
         if self.num_items == 1:
             warnings.warn("Note: ensemble operation being performed on an array with only one item")
-            return squareform(self._regularize_pairwise_square_matrix(squareform(self.data[0]))) \
-                if regularize else self.data[0][:]
+            return squareform(self._regularize_pairwise_square_matrix(squareform(self.data[0]))) if regularize \
+                else self.data[0][:]
         
         ensemble_matrix = methods[method](self.data[:], axis=0)
-        return squareform(self._regularize_pairwise_square_matrix(squareform(ensemble_matrix))) \
-            if regularize else ensemble_matrix
+        return squareform(self._regularize_pairwise_square_matrix(squareform(ensemble_matrix))) if regularize \
+            else ensemble_matrix
 
 
     # NOTE jb's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
@@ -676,34 +710,39 @@ class PairwiseArrayStack(np.ndarray):
                 return np.where(np.isnan(self), np.nan, self <= threshold)
             return (self <= threshold).astype(int)
 
-        result = 1 / (1 + np.exp(hardness * (self - threshold)))
+        out = 1 / (1 + np.exp(hardness * (self - threshold)))
         if keep_NaNs:
-            return result
-        return np.nan_to_num(result, nan=0, copy=True)
+            return out
+        return np.nan_to_num(out, nan=0, copy=True)
 
 
-    # # TODO verify that the function works correctly
-    # def filter(self, min_efficiency: Number = 0.1) -> np.ndarray:
-    #     """ Filter matrices with insufficient barcode detection.
+    def filter(self, min_efficiency: Number = 0.6) -> np.ndarray:
+        """
+        Remove matrices with insufficient barcode detection.
 
-    #     Parameters
-    #     ----------
-    #     min_efficiency : float
-    #         Minimum proportion of non-NaN values to retain a matrix.
+        Parameters
+        ----------
+        min_efficiency : float
+            Minimum proportion of non-NaN values to retain a matrix.
 
-    #     Returns
-    #     -------
-    #     np.ndarray
-    #         Filtered subset of the stack.
-    #     """
+        Returns
+        -------
+        numpy.ndarray
+            Filtered subset of the stack.
+        """
 
-    #     proportion_bins_not_missing = np.mean(~np.isnan(self), axis=1)
-    #     idxs = np.argwhere(proportion_bins_not_missing > min_efficiency)
+        proportion_bins_not_missing = np.mean(~np.isnan(self), axis=1)
+        idxs = np.argwhere(proportion_bins_not_missing > min_efficiency)
 
-    #     return np.squeeze(self[idxs])
+        return PairwiseArrayStack(np.squeeze(self[idxs, :]))
+    
+
+    # # TODO for normalization of pairwise distances from JB's code
+    # def normalize(self):
+    #     return
 
 
-    def plot_pwds_avg(self, path_to_save: str,
+    def plot_pwds_avg(self, path_to_save: str = "",
                       method: str = "mean",
                       form: str = "triangle", cmap: str = "Reds_r"):
         """
@@ -734,18 +773,26 @@ class PairwiseArrayStack(np.ndarray):
         assert form in ["triangle", "square"]
         assert isinstance(method, str) and method in ["mean", "median"]
 
-        map_form_fn = {"triangle": visualization.plot_2d_triangle, "square": visualization.plot_2d_square,}
+        wflag = False
+        if len(path_to_save.strip()) > 0:
+            wflag = True
+
+        map_form_fn = {"triangle": viz.plot_matrix_triangle, "square": viz.plot_matrix_square,}
 
         matrix = self.ensemble(method=method)
-        im = map_form_fn[form](matrix=matrix, path_to_save=path_to_save, cmap=cmap, label=f"{method} distance")
+        fig = map_form_fn[form](matrix=matrix, path_to_save=path_to_save, cmap=cmap, cbar_label=f"{method} distance")
+        
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
 
-        return im
 
-
-    def plot_proximity_avg(self, path_to_save: str,
-                           threshold: Number, hardness: Number = 1, keep_NaNs: bool = False,
+    def plot_proximity_avg(self, threshold: Number, hardness: Number = 1, keep_NaNs: bool = False,
+                           path_to_save: str = "",
                            form: str = "triangle", cmap: str = "Reds"):
-        """ Plot the ensemble-averaged proximity matrix based on a distance threshold.
+        """
+        Plot the ensemble-averaged proximity matrix based on a distance threshold.
 
         Proximity values are computed using a sigmoidal transformation or hard thresholding, then averaged
         across all items in the stack.
@@ -776,37 +823,49 @@ class PairwiseArrayStack(np.ndarray):
         assert isinstance(path_to_save, str)
         assert form in ["triangle", "square"]
 
-        map_form_fn = {"triangle": visualization.plot_2d_triangle, "square": visualization.plot_2d_square,}
+        wflag = False
+        if len(path_to_save.strip()) > 0:
+            wflag = True
+
+        map_form_fn = {"triangle": viz.plot_matrix_triangle, "square": viz.plot_matrix_square,}
 
         prox_stack = self.proximity(threshold=threshold, hardness=hardness, keep_NaNs=keep_NaNs)
         prox_mean = np.nanmean(prox_stack, axis=0)
-        im = map_form_fn[form](matrix=prox_mean, path_to_save=path_to_save, cmap=cmap, label="mean proximity")
+        fig = map_form_fn[form](matrix=prox_mean, path_to_save=path_to_save, cmap=cmap, cbar_label="mean proximity")
 
-        return im
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
 
 
-    # # TODO plots for efficiency, examples of maps, etc.
-    # def plot_efficiency_map(pwd, path_to_save):
-    #     """ Compute efficiency map.
+    def plot_pixel_efficiency(self, path_to_save: str = "", form: str = "triangle"):
+        """
+        Compute efficiency map by pixel.
 
-    #     @param pwd: (numpy array) pairwise distance maps
-    #     @param root: (str) root folder
-    #     @param tag_exp: (str) indicate the type of experiment that is analyzed
-    #     """
-    #     n_maps = pwd.shape[0]
-    #     efficiency = np.zeros((pwd.shape[1],))
-    #     for n in range(pwd.shape[1]):
-    #         efficiency[n] = np.sum(~np.isnan(pwd[:, n])) * 100 / n_maps
-    #     efficiency = squareform(efficiency)
+        @param pwd: (numpy array) pairwise distance maps
+        @param root: (str) root folder
+        @param tag_exp: (str) indicate the type of experiment that is analyzed
+        """
 
-    #     plt.figure(figsize=(8, 6))
-    #     plt.imshow(efficiency, cmap="hot")
-    #     plt.colorbar(label="efficiency")
-    #     plt.tight_layout()
-    #     plt.title(f'{tag} n={pwd.shape[0]}')
-    #     fig_name = f"Efficiency_{tag_exp}.png"
-    #     fig_path = path.join(root, "barcode_efficiency", fig_name)
-    #     plt.savefig(fig_path, format="png")
+        assert isinstance(path_to_save, str)
+        assert form in ["triangle", "square"]
+
+        wflag = False
+        if len(path_to_save.strip()) > 0:
+            wflag = True
+
+        map_form_fn = {"triangle": viz.plot_matrix_triangle, "square": viz.plot_matrix_square,}
+
+        effs = self.efficiency(by="pixel")
+        fig = map_form_fn[form](matrix=effs,
+                                cmap="hot",
+                                cbar_label="efficiency")
+
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
 
 
     def plot_mean_proximity_proportion(self, path_to_save:str, thresholds:list, hardness=1):
@@ -829,6 +888,10 @@ class PairwiseArrayStack(np.ndarray):
         else:
             assert isinstance(thresholds, Iterable)
 
+        wflag = False
+        if len(path_to_save.strip()) > 0:
+            wflag = True
+
         prop_means = np.empty(len(thresholds))
         for i, thr in enumerate(thresholds):
             stack = self.proximity(threshold=thr, hardness=hardness, keep_NaNs=False)
@@ -836,10 +899,40 @@ class PairwiseArrayStack(np.ndarray):
                 stack = np.where(stack >= 0.75, 1, 0)
             prop_means[i] = np.mean(stack)
 
-        fig = visualization.plot_line(x=thresholds, y=prop_means,
-                                        path_to_save=path_to_save,
-                                        xlabel="Proximity threshold", ylabel="Mean proximity proportion",
-                                        linestyle="-", linewidth=4,
-                                        marker="o", markersize=16)
+        fig = viz.plot_line(x=thresholds, y=prop_means,
+                            xlabel="Proximity threshold", ylabel="Mean proximity proportion",
+                            linestyle="-", linewidth=4,
+                            marker="o", markersize=16)
 
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
         return fig
+
+
+    # TODO complete after normalization procedure is implemented
+    # def plot_proximity_stats(self, threshold: Number):
+    #     """
+    #     Plot the contact histogram
+    #     @param pwd_raw: (numpy array) contains all the raw pairwise distance maps flatten as 1D vector
+    #     @param pwd_normalized: (numpy array) contains all the raw pairwise distance maps flatten as 1D vector
+    #     @param thresh: (int) threshold for the contact in nm
+    #     @param saving_folder: (str) folder where to save the plot
+    #     @return:
+    #     """
+
+    #     raw_contacts = np.where(np.isnan(pwd_raw), np.nan, pwd_raw < thresh)
+    #     raw_contacts = np.nansum(raw_contacts, axis=1)
+    #     normalized_contacts = np.where(np.isnan(pwd_normalized), np.nan, pwd_normalized < thresh)
+    #     normalized_contacts = np.nansum(normalized_contacts, axis=1)
+
+    #     plt.figure(figsize=(8, 6))
+    #     sns.histplot(raw_contacts, bins=50, kde=True, alpha=0.5)
+    #     sns.histplot(normalized_contacts, bins=50, kde=True, alpha=0.5)
+    #     plt.xlabel("Contact Values")
+    #     plt.ylabel("Frequency")
+    #     plt.title("Histogram of Contacts")
+    #     plt.legend(["raw", "normalized"])
+    #     plt.savefig(path.join(saving_folder, f'contact_stat_thresh_{int(thresh)}nm.png'), dpi=150
+    #                 , bbox_inches='tight')
+    #     plt.close()
