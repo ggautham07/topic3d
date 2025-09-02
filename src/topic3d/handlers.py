@@ -465,9 +465,6 @@ class DecompositionResult:
 
     @staticmethod
     def _compute_coherence_npmi_cos(components, data_used, num_top_pixels=10, randomize_data=False):
-        """
-        Compute coherence of components from a decomposition using Normalized Mutual Pointwise Information (NPMI).
-        """
 
         num_components = len(components)
         coherence_npmi = np.zeros((num_components,))
@@ -551,10 +548,6 @@ class DecompositionResult:
 
     # TODO returning mean divergence for decomposition, sorting the matrix by least to most distant?
     def divergence(self, path_to_save:str = None):
-        """
-        Compute the Jensen-Shannon divergence between each pair of components captured from a training
-        and prepare a pairwise matrix plot if `path_to_save` is provided
-        """
 
         pw_divergence = pdist(self.components, metric="jensenshannon")
         
@@ -585,17 +578,6 @@ class DecompositionResult:
 
 
     def coherence(self, method: str = "all", num_top_pixels : int = None):
-        """Compute the coherence of the decomposition using the method indicated.
-        
-        Parameters
-        --------
-        method : str
-            npmi-cos, umass, or all
-
-        Returns
-        --------
-        coherence : tuple
-        """
 
         assert isinstance(method, str) and method.lower() in ["npmi-cos", "umass", "all"]
         assert self.data_training is not None
@@ -620,12 +602,6 @@ class DecompositionResult:
     
 
     def plot_components(self, path_to_save: str, cmap: str = "Reds", common_cbar: bool = False):
-        """
-        Plot the componets from a topic decomposition.
-
-        Parameters
-        --------
-        """
         
         fig = viz.plot_grid_2d_squares(self.components, titles=[f"T{i}" for i in range(self.num_components)],
                                        cmap=cmap, common_cbar=common_cbar, cbar_label="pseudocount")
@@ -652,12 +628,6 @@ class DecompositionResult:
                             cluster: bool = False,
                             save_models: bool = True,
                             **kwargs):
-        """
-        Embed the decomposition in a lower dimensional space using one of several methods and cluster.
-
-        Parameters
-        --------
-        """
 
         assert isinstance(dir_to_save, str) and path.isdir(dir_to_save)
         assert isinstance(method, str)

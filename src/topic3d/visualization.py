@@ -19,7 +19,6 @@ import matplotlib.pyplot as plt
 import matplotlib.transforms as transforms
 from matplotlib.patches import Patch, Polygon
 import matplotlib.patheffects as patheffects
-from matplotlib.axes import Axes
 from matplotlib import rcParams
 import seaborn as sns
 from PIL import Image
@@ -27,6 +26,8 @@ from PIL import Image
 from os import path
 from typing import Dict, List, Tuple
 from collections import Counter
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 # Setting global matplotlib parameters
 # TODO change all properties that have a global same value (or most of the time)
@@ -50,7 +51,7 @@ def _get_grid_num_rows_cols(num_items):
 
 
 # TODO add possibility of passing x, y pairs as parameters so that multiple lines can be plotted on the same axis
-def plot_line(x, y, xlabel="", ylabel="", **kwargs):
+def plot_line(x, y, xlabel="", ylabel="", **kwargs) -> Figure:
     """
     Create a figure and axis object, and plot the data in a manuscript-ready graphic and format
 
@@ -78,7 +79,7 @@ def plot_line(x, y, xlabel="", ylabel="", **kwargs):
     sns.lineplot(x=x, y=y, ax=ax, **properties)
     plt.tight_layout()
     
-    return fig, ax
+    return fig
 
 
 # TODO finish setting ticks, labels and colours in manuscript-ready format
@@ -463,7 +464,7 @@ def _plot_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines
 
 
 # TODO use below function to plot any number of subplots
-def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label=""):
+def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label="") -> Figure:
     """
     Plot a 2D matrix as a triangular matrix with a colorbar
     
@@ -519,7 +520,7 @@ def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label=""):
 
 
 # TODO move main plotting code to a helper function; use below function to plot any number of subplots
-def plot_matrix_square(matrix:np.ndarray, cmap="Reds", label=""):
+def plot_matrix_square(matrix:np.ndarray, cmap="Reds", label="") -> Figure:
     """ Plot a 2D matrix as a square symmetric matrix with a colorbar
     
     Parameters
