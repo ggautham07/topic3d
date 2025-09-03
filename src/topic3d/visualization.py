@@ -666,7 +666,7 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
     # ------------------------------------------------------------------
     topic_sq = squareform(topic) if topic.ndim == 1 else topic
 
-    or_dict = odds_ratio_matrix(topic_sq, locus_dict, bright_q)
+    or_dict = _odds_ratio_matrix(topic_sq, locus_dict, bright_q)
     print(or_dict)
     enrich  = [(et, OR) for et, (OR, _) in or_dict.items() if OR > 1]
     enrich.sort(key=lambda x: x[1], reverse=True)
@@ -676,7 +676,7 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
     #  Base triangular heat‑map (unchanged from original)
     # ------------------------------------------------------------------
     fig, ax = plt.subplots(figsize=(10, 10))
-    im = _plot_triangular_matrix(topic_sq, ax=ax, cmap=cmap)
+    im = _plot_2d_tri_map(topic_sq, ax=ax, cmap=cmap)
 
     tick_dict = parse_locus_labels(locus_dict, lib)
     ax = _annotate_labels(ax, tick_dict, locus_dict, lib,

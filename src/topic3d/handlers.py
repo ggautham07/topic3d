@@ -14,6 +14,7 @@ Function reference
 # IMPORTS
 # =============================================================================
 
+from __future__ import annotations
 from numbers import Number
 from os import path
 from io import StringIO
@@ -51,24 +52,29 @@ class RawData:
 
     def __init__(self):
         self.library = None
-        self.unit = None
-        self.assembly = None
-        self.trace_ids = None
         self.traces = None
         self.num_traces = None
         self.num_bc = None
         self.bc_ids = None
-        self.bc_bins = None
+        self.sources = None
 
 
     def __str__(self):
-        return (f"FOF-CT data: {self.library is not None}\n"
-                f"Trace array: {self.traces is not None}\n"
-                f"Genome assembly: {self.assembly}\n"
-                f"Measurement unit: {self.unit}\n"
-                f"Number of barcodes: {self.num_bc}\n"
-                f"Number of traces: {self.num_traces}\n"
-                )
+        out = ["RawData object"]
+        avail_fof = False
+        if self.library is not None and isinstance(self.library, pd.DataFrame):
+            avail_fof = True
+            out.append(f"Fish Omics Format (FOF) data: {'available' if avail_fof else 'unavailable'}")
+        avail_tr = False
+        if self.traces is not None and isinstance(self.traces, np.ndarray):
+            avail_tr = True
+            out.append(f"Traces array: {'available' if avail_tr else 'unavailable'}")
+        if self.num_traces is not None:
+                out.append(f"Number of traces: {self.num_traces}")
+        if self.num_bc is not None:
+                out.append(f"Number of barcodes: {self.num_bc}")
+        out = "\n".join(out)
+        return out
     
 
     @staticmethod
@@ -82,7 +88,7 @@ class RawData:
         return full_seq[full_seq.index(sub_seq):].split("\n", maxsplit=1)
     
 
-    def _extract_traces_from_fof(self):
+    def _extract_traces_from_fof(self) -> np.ndarray:
         """Extract traces from a FOF-CT Dataframe"""
 
         traces = np.empty((self.num_traces, self.num_bc, 3))
@@ -99,7 +105,8 @@ class RawData:
     
     # TODO integrate with main load function, if possible including similar version for FOF data 
     # (code available from Marcelo)
-    def _merge_numpy_trace_files(*args):
+    @staticmethod
+    def _merge_numpy_trace_files(*args) -> np.ndarray:
         """
         Merge multiple Numpy trace files.
 
@@ -109,10 +116,13 @@ class RawData:
 
         Parameters
         --------
-        Numpy file paths
+        args : str
+            paths to Numpy files
 
         Returns
         --------
+        out : np.ndarray
+            merged traces array
 
         """
 
@@ -146,22 +156,47 @@ class RawData:
 
 
     # TODO path_to_file can also take a list of files with the same extension/format, and merge the data
-    # original code version for combining multiple files written by Marcelo only works for FOF files
-    def load(self, path_to_file:str, extract_items:bool = True):
+    # NOTE _merge_numpy_trace_files and marcnol's FOF data handler code to be used for merging
+    def load(self, path_to_file:str, metadata:dict = None, extract_items:bool = True) -> None:
         """
         Open a trace file; can either be a FOF-CT trace core file or a Numpy file.
-        Former will be formatted as a pandas dataframe.
-        @param file_path: (str) path to the file
-        @return: data: (pd dataframe) contains the XYZ localizations and barcode positions for all localizations
-        @return: unit: (str) indicate which unit was used for the data
+        Former will be formatted as a pandas dataframe. Latter directly as CoordsStackArray object
+
+        Parameters
+        --------
+        path_to_file : str
+            path to the raw data file
+        metadata : dict
+            metadata to support data from Numpy. Ignored for FOF data.
+            Accepted keys are "trace_ids", "bc_ids", "bc_bins". Others will be added soon
+        extract_items : bool
+            if True (which is default), extract traces from FOF data and set traces object
+        
+        Returns
+        --------
+        None
+            class attributes are set automatically
         """
 
         assert path.isfile(path_to_file)
+        self.sources = [path_to_file]
 
         if path_to_file.endswith(".npy"):
             self.traces = CoordsArrayStack(np.load(path_to_file, allow_pickle=True))
             assert self.traces.data.shape[-1] == 3
-            del self.library
+            self.num_traces, self.num_bc, _ = self.traces.shape
+            self.bc_ids = np.arange(self.num_bc)
+            if isinstance(metadata, dict):
+                self.trace_ids = metadata.get("trace_ids", None)
+                self.bc_ids = metadata.get("bc_ids", np.arange(self.num_bc))
+                self.bc_bins = metadata.get("bc_bins", None)
+                if self.bc_bins is not None:
+                    self.bc_bins_sizes = self.bc_bins[:, 1] - self.bc_bins[:, 0]
+                    self.bc_bins_contiguity = np.all(self.bc_bins[1:, 0] - self.bc_bins[:-1, 1] == 0)
+                for v in vars(self):
+                    if v is None and v not in ["library", "traces", "num_traces", "num_bc", "bc_ids"]:
+                        del v
+
 
         elif path_to_file.endswith(".csv"):
 
@@ -179,20 +214,21 @@ class RawData:
             unit = self._extract_header_row_from_fof(contents, "##XYZ_unit")[0].split("=")[1]
 
             # Variable assignment
-            self.library = data
+            self.library = data.copy()
             self.unit = unit
             self.assembly = assembly
 
             self.trace_ids = np.unique(self.library["Trace_ID"])
             self.num_traces = len(self.trace_ids)
 
-            # TODO sorting of bins to retain insertion order
-            chrom_starts = np.unique(data["Chrom_Start"])
-            chrom_ends = np.unique(data["Chrom_End"])
+            chrom_starts = np.sort(self.library.Chrom_Start.unique())
+            chrom_ends = np.sort(self.library.Chrom_End.unique())
             assert len(chrom_starts) == len(chrom_ends)
-            self.num_bc = len(chrom_starts)
-            self.bc_ids = list(range(self.num_bc))
-            self.bc_bins = OrderedDict(zip(self.bc_ids, zip(chrom_starts, chrom_ends)))     # NOTE maybe use 3-col array
+            self.bc_bins = np.hstack((chrom_starts[..., np.newaxis], chrom_ends[..., np.newaxis]))
+            self.num_bc = len(self.bc_bins)
+            self.bc_ids = np.arange(self.num_bc)
+            self.bc_bins_sizes = self.bc_bins[:, 1] - self.bc_bins[:, 0]
+            self.bc_bins_contiguity = np.all(self.bc_bins[1:, 0] - self.bc_bins[:-1, 1] == 0)   # TODO contiguity array
 
             # Extraction of traces
             if extract_items:
@@ -202,25 +238,31 @@ class RawData:
             raise Exception("Invalid file extension. Only npy and csv files accepted")
 
 
-    def process(self):
+    def process(self) -> ProcessedData:
         """Process the trace data and return everything as a Processed data object"""
 
-        assert self.traces is not None
-        prc_data = ProcessedData()
-        prc_data.traces = self.traces
-        prc_data.bc_effs = self.traces.efficiency(by="barcode")
-        prc_data.pwds = self.traces.pwds()
-        if self.library is None:
-            prc_data.metadata = None
-        else:
-            self.bc_bin_sizes = [end - start for start, end in self.bc_bins.values()]
-            prc_data.metadata = {"bc_bins": self.bc_bins,
-                                 "bc_bin_sizes": self.bc_bin_sizes}
-        return prc_data
+        assert self.traces is not None, "Traces object `ProcessedData.traces` is required for processing"
+
+        pdata = ProcessedData()
+        pdata.traces = self.traces
+        pdata.bc_effs = self.traces.efficiency(by="barcode")
+        pdata.pwds = self.traces.pwds()
+        pdata.metadata = {"num_traces": self.num_traces,
+                          "num_bc": self.num_bc,
+                          "bc_ids": self.bc_ids,
+                          "sources": self.sources}
+        if self.library is not None:
+            pdata.metadata.update({"bc_bins": self.bc_bins,
+                                   "bc_bins_sizes": self.bc_bins_sizes,
+                                   "bc_bins_contiguity": self.bc_bins_contiguity})
+
+        return pdata
     
     
-    def compute_3d_vs_genomic_dists(self, max_realistic_3d_dist : Number):
-        """Using the genomic distance between the barcodes, compute the median 3d distance as a function of the genomic
+    # NOTE not working
+    def compute_3d_vs_genomic_dists(self, max_realistic_3d_dist:Number, experiment:int, axis="X") -> pd.DataFrame:
+        """
+        Using the genomic distance between the barcodes, compute the median 3d distance as a function of the genomic
         distance.
 
         @param pairwise_dist: (numpy array) pairwise distances for each individual trace
@@ -231,7 +273,6 @@ class RawData:
         @param axis: (str) indicate which axis is being processed
         @return:
         dist: (pandas dataframe) contains all the data for the histogram
-
         """
 
         pw_dists_3d = self.traces.pwds()
@@ -250,8 +291,10 @@ class RawData:
         pw_dists_genomic_3d_combined[pw_dists_genomic_3d_combined[:, 1] > max_realistic_3d_dist, 1] = np.nan
 
         # to make the plot easier to read, data are binned
-        bins_genomic = np.linspace(start=np.min(pw_dists_genomic), stop=np.max(pw_dists_genomic)+1, num=20)
-        dists_3d_vs_genomic = np.zeros((len(bins_genomic), 3))
+        bins_genomic = np.linspace(start=np.min(pw_dists_genomic),
+                                   stop=np.max(pw_dists_genomic),
+                                   num=30)
+        dists_3d_vs_genomic = np.zeros((len(bins_genomic)-1, 3))
         for bin in range(len(bins_genomic) - 1):
             idx = np.where((pw_dists_genomic_3d_combined[:, 0] >= bins_genomic[bin]) & \
                            (pw_dists_genomic_3d_combined[:, 0] < bins_genomic[bin+1]))
@@ -259,18 +302,19 @@ class RawData:
                                            np.nanmedian(pw_dists_genomic_3d_combined[idx, 1]), 
                                            len(idx[0])]
 
-        # convert to dataframe
         results = pd.DataFrame()
-        results["genomic distance"] = dists_3d_vs_genomic[:, 0]
-        results["log10 genomic dist"] = np.log10(dists_3d_vs_genomic[:, 0])
-        results["median euclidean distance"] = dists_3d_vs_genomic[:, 1]
-        results["log10 median dist"] = np.log10(dists_3d_vs_genomic[:, 1])
+        results["genomic distance (kbp)"] = dists_3d_vs_genomic[:, 0]
+        results["log10 genomic dist (kbp)"] = np.log10(dists_3d_vs_genomic[:, 0])
+        results["median euclidean distance (nm)"] = dists_3d_vs_genomic[:, 1]
+        results["log10 median dist (nm)"] = np.log10(dists_3d_vs_genomic[:, 1])
         results["n_data"] = dists_3d_vs_genomic[:, 2]
+        results["experiment"] = [f'exp_{experiment}'] * (len(bins_genomic) - 1)
+        results["axis"] = [axis] * (len(bins_genomic) - 1)
 
         return results
     
 
-    def compute_inter_loci_genomic_dist(self):
+    def compute_inter_loci_genomic_dist(self) -> np.ndarray:
         """
         Compute the genomic distance separating two consecutive barcodes (from the experiment)
 
@@ -279,14 +323,45 @@ class RawData:
         @return: locus_dist: (pandas dataframe) contains the genomic distance in kbp
         """
 
-        bins = np.asarray([[start, end] for start, end in self.bc_bins.values()])
-        assert bins.shape[-1] == 2
-        if np.any(bins[1:, 0] - bins[:-1, 1] != 0):
-            warnings.warn("Discontiguous segments supplied, to note while interpreting the the result")
+        assert self.bc_bins
+        if not self.bc_bins_contiguity:
+            warnings.warn("Note: discontiguous segments supplied")
 
-        bins_mean_pos = np.mean(bins, axis=1)
+        bins_mean_pos = np.mean(self.bc_bins, axis=1)
 
         return bins_mean_pos[1:] - bins_mean_pos[:-1]
+    
+    @staticmethod
+    def plot_log_normalization_graph(dist_df:pd.DataFrame, dim:dict, saving_filename:str, normalized_data=False):
+        """
+        Plot in log-log scale the distance versus the genomic distance for the raw data and after normalization shift.
+
+        @param dist_df: (pandas dataframe) contains all the histogram distance data (Euclidean and genomic)
+        @param dim: (dict) dictionary indicating the name of the axis
+        @param saving_filename: (str) path where to save the figure
+        @param normalized_data: (bool) indicate whether the raw or normalized data should be used
+        """
+        
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        
+        fig, axs = plt.subplots(nrows=3, ncols=1)
+        for ax_name, ax in dim.items():
+            if normalized_data:
+                df = dist_df.loc[dist_df["axis"] == ax_name, ['log10 genomic dist (kbp)',
+                                                            'log10 normalized (nm)',
+                                                            'experiment']]
+                sns.scatterplot(data=df, x='log10 genomic dist (kbp)', y='log10 normalized (nm)',
+                                hue="experiment", ax=axs[ax])
+            else:
+                df = dist_df.loc[dist_df["axis"] == ax_name, ['log10 genomic dist (kbp)',
+                                                            'log10 median dist (nm)',
+                                                            'experiment']]
+                sns.scatterplot(data=df, x='log10 genomic dist (kbp)', y='log10 median dist (nm)',
+                                hue="experiment", ax=axs[ax])
+        fig.set_size_inches(8, 10)
+        plt.savefig(saving_filename, dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
 
 
@@ -294,7 +369,7 @@ class ProcessedData:
     """
     Handler for processed data, both loading and saving
     
-    Methods for plotting, computations can only be performed on RawData objects or separately using array functions
+    Methods for plotting, computations can be performed on CoordsArrayStack and PairwiseArrayStack
     
     Metadata includes barcode list, their genomic bins and detection efficiencies
     """
@@ -314,7 +389,7 @@ class ProcessedData:
                 )
 
 
-    def load(self, path_to_file:str):
+    def load(self, path_to_file:str) -> None:
         # assert path.isfile(path_to_file)
         assert path_to_file.endswith(".h5")
         with h5py.File(path_to_file, mode="r") as handler:
@@ -328,7 +403,7 @@ class ProcessedData:
         self.metadata = attributes
 
 
-    def save(self, path_to_file:str, replace=True):
+    def save(self, path_to_file:str, replace=True) -> None:
         if path.isfile(path_to_file) and not replace:
             raise FileExistsError("File already exists and replace is set to False")
         attr_labels = [attr for attr in dir(self) if not callable(getattr(self, attr)) and not attr.startswith("__")]
@@ -345,21 +420,6 @@ class ProcessedData:
                 except TypeError:
                     handler.attrs[atlab] = attr
                     print(f"Saved {atlab} successfully as attribute")
-    
-
-    # TODO NOTE standardise use of sns for all plots to maintain consistency
-    def plot_3d_vs_genomic_dists():
-        """Plot the 3D distance as a function of the genomic distance"""
-
-
-    # TODO
-    def plot_pwds_distribution():
-        """"""
-
-
-    # TODO
-    def plot_bc_effs():
-        """"""
 
 
 

@@ -11,6 +11,7 @@ Data types for topic decomposition (:mod:`topic3d.datatypes`)
 # IMPORTS
 # =============================================================================
 
+from __future__ import annotations      # required for type hinting a class method returning same class
 from os import path
 import warnings
 from typing import Iterable
@@ -94,12 +95,11 @@ class CoordsArrayStack(np.ndarray):
 
 
     def __str__(self):
-        out = f"CoordsArrayStack\n# barcodes: {self.num_bc}\n# items: {self.num_items}"
-        return out
+        return f"CoordsArrayStack\n# items: {self.num_items}\n# barcodes: {self.num_bc}"
     
 
     @staticmethod
-    def _set_figsave_flag(fp:str):
+    def _set_figsave_flag(fp:str) -> bool:
         """Set the figure save flag based on path string"""
 
         if len(fp.strip()) > 0:
@@ -422,6 +422,10 @@ class PairwiseArrayStack(np.ndarray):
         obj.num_bc = d
 
         return obj
+    
+
+    def __str__(self):
+        return f"PairwiseArrayStack\n# items: {self.num_items}\n# barcodes: {self.num_bc}"
 
 
     # Since new attributes were added in __new__
@@ -797,7 +801,9 @@ class PairwiseArrayStack(np.ndarray):
         map_form_fn = {"triangle": viz.plot_matrix_triangle, "square": viz.plot_matrix_square,}
 
         matrix = self.ensemble(method=method)
-        fig = map_form_fn[form](matrix=matrix, path_to_save=path_to_save, cmap=cmap, cbar_label=f"{method} distance")
+        fig = map_form_fn[form](matrix=matrix,
+                                cmap=cmap,
+                                cbar_label=f"{method} distance")
         
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
@@ -846,7 +852,9 @@ class PairwiseArrayStack(np.ndarray):
 
         prox_stack = self.proximity(threshold=threshold, hardness=hardness, keep_NaNs=keep_NaNs)
         prox_mean = np.nanmean(prox_stack, axis=0)
-        fig = map_form_fn[form](matrix=prox_mean, path_to_save=path_to_save, cmap=cmap, cbar_label="mean proximity")
+        fig = map_form_fn[form](matrix=prox_mean,
+                                cmap=cmap,
+                                cbar_label="mean proximity")
 
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
