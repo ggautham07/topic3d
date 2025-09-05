@@ -337,7 +337,8 @@ class CoordsArrayStack(np.ndarray):
             stack_imp = self.impute(method="naive")
             effs_imp = stack_imp.efficiency(by="barcode")
 
-        fig = viz.plot_bar(data=[effs, effs_imp], xlabel="Barcode #", ylabel="Efficiency")
+        fig = viz.plot_bar(data={"barcode_id": np.arange(self.num_bc),"efficiency": effs},
+                           xlabel="Barcode #", ylabel="Efficiency")
 
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
@@ -803,7 +804,8 @@ class PairwiseArrayStack(np.ndarray):
         matrix = self.ensemble(method=method)
         fig = map_form_fn[form](matrix=matrix,
                                 cmap=cmap,
-                                cbar_label=f"{method} distance")
+                                cbar_label=f"{method} distance",
+                                title=f"n = {self.num_items}")
         
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
@@ -854,7 +856,8 @@ class PairwiseArrayStack(np.ndarray):
         prox_mean = np.nanmean(prox_stack, axis=0)
         fig = map_form_fn[form](matrix=prox_mean,
                                 cmap=cmap,
-                                cbar_label="mean proximity")
+                                cbar_label="mean proximity",
+                                title=f"n = {self.num_items}")
 
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")

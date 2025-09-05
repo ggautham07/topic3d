@@ -92,7 +92,7 @@ def plot_bar(data:dict, xlabel="", ylabel="", **kwargs):
     properties = kwargs.copy()
 
     fig, ax = plt.subplots()
-    fig.set_figwidth(max(data["barcode_id"]) // 2.25)
+    fig.set_figwidth(15)
     fig.set_figheight(9)
     ax.tick_params(axis="x", labelsize=30, which="major", pad=16, direction="in", length=8, width=1.1)
     ax.tick_params(axis="x", labelsize=22, which="minor", pad=16, direction="in", length=4, width=1)
@@ -464,7 +464,7 @@ def _plot_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines
 
 
 # TODO use below function to plot any number of subplots
-def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label="") -> Figure:
+def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label="", title="") -> Figure:
     """
     Plot a 2D matrix as a triangular matrix with a colorbar
     
@@ -502,6 +502,8 @@ def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label="") -> Figur
                    fontsize=26)
     cbar.ax.set_xlabel(cbar_label, fontsize=22, labelpad=16)    # "Pseudocount", fontsize=font_info["tick_label"]
     cbar.outline.set_visible(False)
+
+    ax.text(x=0.1, y=0.9, s=title, transform=ax.transAxes, fontsize=10)
     # Add barcode labels and other annotations  # TODO
     # ax.text(0.5, 0.55,
     #         f"Sample",
@@ -520,6 +522,7 @@ def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label="") -> Figur
 
 
 # TODO move main plotting code to a helper function; use below function to plot any number of subplots
+# TODO     ax.text(x=0.1, y=0.9, s=title, transform=ax.transAxes, fontsize=10)
 def plot_matrix_square(matrix:np.ndarray, cmap="Reds", label="") -> Figure:
     """ Plot a 2D matrix as a square symmetric matrix with a colorbar
     
