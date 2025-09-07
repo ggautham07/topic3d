@@ -11,7 +11,7 @@ Data types for topic decomposition (:mod:`topic3d.datatypes`)
 # IMPORTS
 # =============================================================================
 
-from __future__ import annotations      # required for type hinting a class method returning same class
+from __future__ import annotations      # required for type hinting a class method returning an instance of the class
 from os import path
 import warnings
 from typing import Iterable
@@ -23,7 +23,6 @@ from scipy.linalg import issymmetric
 
 import matplotlib.pyplot as plt
 from . import visualization as viz
-
 
 
 # =============================================================================
@@ -126,9 +125,9 @@ class CoordsArrayStack(np.ndarray):
         return np.nanmean(self, axis=1)
 
 
-    def pwds(self) -> PairwiseArrayStack:
+    def pwds(self) -> PWDistArrayStack:
         """
-        Compute the pairwise distances between all barcodes within each trace.
+        Compute the pairwise distances between all barcodes within each item.
 
         Returns
         -------
@@ -141,15 +140,15 @@ class CoordsArrayStack(np.ndarray):
         array([[0.0, 1.4, 3.2, ...], [...], ...])
         """
 
-        pwds = np.empty((self.num_items, int((self.num_bc * (self.num_bc - 1)) / 2), ))
+        pwds = np.empty((self.num_items, int((self.num_bc * (self.num_bc-1)) / 2)))
         for i in range(self.num_items):
             pwds[i] = pdist(self[i])
-        pwds = PairwiseArrayStack(pwds)
+        pwds = PWDistArrayStack(pwds)
 
         return pwds
 
 
-    def efficiency(self, by: str = "item") -> np.ndarray:
+    def efficiency(self, by: str = "barcode") -> np.ndarray:
         """
         Compute the detection efficiency of barcodes or traces.
 
@@ -202,8 +201,9 @@ class CoordsArrayStack(np.ndarray):
 
         effs = self.efficiency(by=by)
         idxs = np.argwhere(effs >= min_efficiency)
+        out = CoordsArrayStack(np.squeeze(self[:, idxs]) if by=="barcode" else np.squeeze(self[idxs]))
 
-        return CoordsArrayStack(np.squeeze(self[:, idxs]) if by=="barcode" else np.squeeze(self[idxs]))
+        return out
 
 
     def impute(self, method="naive") -> CoordsArrayStack:
@@ -229,7 +229,6 @@ class CoordsArrayStack(np.ndarray):
 
         method = method.lower()
         assert method in ["naive", "jost"]
-
         if np.all(~np.isnan(self)):
             warnings.warn("No NaNs to impute in the stack")
             return self
@@ -244,7 +243,7 @@ class CoordsArrayStack(np.ndarray):
         elif method == "jost":
             # needs the mean-squared pairwise distance matrix, regularized
             pwds_mean2 = squareform(self.pwds().ensemble(method="mean") ** 2)
-            pwds_mean2 = PairwiseArrayStack._regularize_pairwise_square_matrix(pwds_mean2)
+            pwds_mean2 = PWDistArrayStack._regz_pw_sq_matrix(pwds_mean2)
             assert pwds_mean2.ndim == 2
             for n in range(self.num_items):
                 tr = stack_imp[n][:]
@@ -265,9 +264,9 @@ class CoordsArrayStack(np.ndarray):
                 missing_idxs = np.argwhere(missing_pos_bool).T[0]
                 available_idxs = np.argwhere(available_pos_bool).T[0]
                 new_order = np.concatenate((available_idxs, missing_idxs))
-                mean2_reorg = PairwiseArrayStack._reorganize_pairwise_square_matrix(pwds_mean2, new_order)
+                mean2_reorg = PWDistArrayStack._reorg_pw_sq_matrix(pwds_mean2, new_order)
                 # get sigma matrix
-                sigma = PairwiseArrayStack._cov_from_D2_matrix(mean2_reorg)
+                sigma = PWDistArrayStack._cov_from_D2_matrix(mean2_reorg)
                 mu = np.zeros((1, self.num_bc-1))
                 mu_available = mu[:,:s-1]
                 mu_missing = mu[:,s-1:]
@@ -297,13 +296,13 @@ class CoordsArrayStack(np.ndarray):
 
         stack_imp = CoordsArrayStack(stack_imp)
 
-        return stack_imp, std_xyz
+        return (stack_imp, std_xyz) if method == "jost" else stack_imp
 
 
-    # TODO add kwargs where necessary
-    def plot_barcode_efficiency(self, path_to_save: str = "", include_imputed: bool = False):
+    # TODO include plotting for imputed data, currently no parameter defined in the code
+    def plot_bc_efficiency(self, path_to_save: str = "", **kwargs):
         """
-        Plot the barcode-wise detection efficiency for the dataset, with optional imputation overlay.
+        Plot the barcode-wise detection efficiency for the dataset.
 
         This function computes the detection efficiency of each barcode across all traces
         and plots a bar chart. If `include_imputed` is True, it overlays the efficiency
@@ -313,8 +312,6 @@ class CoordsArrayStack(np.ndarray):
         ----------
         path_to_save : str, optional
             Path to save the plot. If an empty string is provided (default), the plot is not saved.
-        include_imputed : bool, optional
-            Whether to compute and include the imputed barcode efficiency (default: False).
 
         Returns
         -------
@@ -327,18 +324,19 @@ class CoordsArrayStack(np.ndarray):
         >>> fig.show()
         """
 
-
         assert isinstance(path_to_save, str)
 
         wflag = self._set_figsave_flag(path_to_save)
 
         effs = self.efficiency(by="barcode")
-        if include_imputed:
-            stack_imp = self.impute(method="naive")
-            effs_imp = stack_imp.efficiency(by="barcode")
+        # if include_imputed:
+        #     stack_imp = self.impute(method="naive")
+        #     effs_imp = stack_imp.efficiency(by="barcode")
 
         fig = viz.plot_bar(data={"barcode_id": np.arange(self.num_bc),"efficiency": effs},
-                           xlabel="Barcode #", ylabel="Efficiency")
+                           x="barcode_id", y="efficiency",
+                           xlabel="Barcode #", ylabel="Efficiency",
+                           **kwargs)
 
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
@@ -350,11 +348,12 @@ class CoordsArrayStack(np.ndarray):
 
 
 
-class PairwiseArrayStack(np.ndarray):
+class PWDistArrayStack(np.ndarray):
     """
-    A stack of pairwise distance vectors (1D) with utilities for covariance inference,
-    matrix regularization, and visualization. Used to represent and process collections of intra-trace 
-    pairwise distances in chromatin tracing or polymer modeling.
+    A stack of pairwise distance vectors (1D) with utilities for matrix operations and visualization.
+    
+    Used to represent and process collections of intra-trace pairwise distances in chromatin tracing or
+    polymer modeling.
 
     Parameters
     ----------
@@ -438,15 +437,15 @@ class PairwiseArrayStack(np.ndarray):
 
     @staticmethod
     def _set_figsave_flag(fp:str) -> bool:
-        """Set the figure save flag based on path string"""
+        """Set the flag to save a Figure based on path string length"""
 
         if len(fp.strip()) > 0:
             return True
         return False
 
-
+    # TODO class method to check symmetric matrices in the stack
     @staticmethod
-    def _make_pairwise_square_matrix_symmetric(matrix:np.ndarray) -> np.ndarray:
+    def _make_pw_sq_matrix_symm(matrix:np.ndarray) -> np.ndarray:
         """
         Ensure the matrix is symmetric by copying upper triangle to lower (or averaging).
 
@@ -495,7 +494,7 @@ class PairwiseArrayStack(np.ndarray):
             for j in range(i+1, num_bc-1):
                 cov[i,j] = (cov[i,i] + cov[j,j] - matrix[i+1, j+1]) / 2
         
-        cov = PairwiseArrayStack._make_pairwise_square_matrix_symmetric(cov)
+        cov = PWDistArrayStack._make_pw_sq_matrix_symm(cov)
         return cov
 
 
@@ -520,7 +519,7 @@ class PairwiseArrayStack(np.ndarray):
 
         mean2 = np.zeros((N, N))    
         mean2[0,1:] = np.diag(cov)
-        mean2 = PairwiseArrayStack._make_pairwise_square_matrix_symmetric(mean2)
+        mean2 = PWDistArrayStack._make_pw_sq_matrix_symm(mean2)
         for i in range(1, N):
             for j in range(i+1, N):
                 mean2[i,j] = -2 * cov[i-1, j-1] + cov[i-1, i-1] + cov[j-1, j-1]
@@ -578,15 +577,15 @@ class PairwiseArrayStack(np.ndarray):
         new_min = np.min(ref)
         new_max = np.max(ref)
 
-        arr_rescaled = (PairwiseArrayStack._normalize_minmax(arr) * (new_max - new_min)) + new_min
+        arr_rescaled = (PWDistArrayStack._normalize_minmax(arr) * (new_max - new_min)) + new_min
 
         return arr_rescaled
 
 
     @staticmethod
-    def _regularize_pairwise_square_matrix(matrix:np.ndarray, hack=False) -> np.ndarray:
+    def _regz_pw_sq_matrix(matrix:np.ndarray, hack=False) -> np.ndarray:
         """
-        Make matrix positive definite by adjusting negative eigenvalues.
+        Make matrix positive definite by adjusting negative eigenvalues (i.e., regularize).
 
         Parameters
         ----------
@@ -611,13 +610,13 @@ class PairwiseArrayStack(np.ndarray):
             eigenvals[eigenvals < 0] = 1e-06
         matrix_reg = eigenvecs @ np.diag(eigenvals) @ np.linalg.inv(eigenvecs)
         # TODO without the following step, will the matrix be symmetric?
-        matrix_reg = PairwiseArrayStack._make_pairwise_square_matrix_symmetric(matrix_reg)  
+        matrix_reg = PWDistArrayStack._make_pw_sq_matrix_symm(matrix_reg)
         return matrix_reg
 
 
     # TODO finish the vectorised implementation for a 3D stack (now 2D matrix)
     @staticmethod
-    def _reorganize_pairwise_square_matrix(matrix:np.ndarray, idxs) -> np.ndarray:      
+    def _reorg_pw_sq_matrix(matrix:np.ndarray, idxs) -> np.ndarray:      
         """
         Reorder a matrix using a new set of indices.
 
@@ -688,16 +687,16 @@ class PairwiseArrayStack(np.ndarray):
 
         if self.num_items == 1:
             warnings.warn("Note: ensemble operation being performed on an array with only one item")
-            return squareform(self._regularize_pairwise_square_matrix(squareform(self.data[0]))) if regularize \
+            return squareform(self._regz_pw_sq_matrix(squareform(self.data[0]))) if regularize \
                 else self.data[0][:]
         
-        ensemble_matrix = methods[method](self.data[:], axis=0)
-        return squareform(self._regularize_pairwise_square_matrix(squareform(ensemble_matrix))) if regularize \
+        ensemble_matrix = methods[method](self.data, axis=0)
+        return squareform(self._regz_pw_sq_matrix(squareform(ensemble_matrix))) if regularize \
             else ensemble_matrix
 
 
     # NOTE jb's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
-    def proximity(self, threshold:Number, hardness=1, keep_NaNs=False) -> PairwiseArrayStack:
+    def proximity(self, threshold:Number, hardness=1, keep_NaNs=False) -> PWDistArrayStack:
         """
         Convert distances into proximity values using a sigmoid function or hard threshold.
 
@@ -740,7 +739,7 @@ class PairwiseArrayStack(np.ndarray):
         return np.nan_to_num(out, nan=0, copy=True)
 
 
-    def filter(self, min_efficiency: Number = 0.6) -> PairwiseArrayStack:
+    def filter(self, min_efficiency: Number = 0.6) -> PWDistArrayStack:
         """
         Remove matrices with insufficient barcode detection.
 
@@ -757,8 +756,9 @@ class PairwiseArrayStack(np.ndarray):
 
         proportion_bins_not_missing = np.mean(~np.isnan(self), axis=1)
         idxs = np.argwhere(proportion_bins_not_missing > min_efficiency)
+        out = PWDistArrayStack(np.squeeze(self[idxs, :]))
 
-        return PairwiseArrayStack(np.squeeze(self[idxs, :]))
+        return out
     
 
     # # TODO for normalization of pairwise distances from JB's code, available in format_FOF_data.py
@@ -766,8 +766,8 @@ class PairwiseArrayStack(np.ndarray):
     #     return
 
 
-    def plot_pwds_avg(self, path_to_save: str = "",
-                      method: str = "mean",
+    def plot_pwds_avg(self, method: str = "mean",
+                      path_to_save: str = "",
                       form: str = "triangle", cmap: str = "Reds_r"):
         """
         Plot the ensemble-averaged pairwise distance matrix across the stack.
@@ -850,15 +850,46 @@ class PairwiseArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        map_form_fn = {"triangle": viz.plot_matrix_triangle, "square": viz.plot_matrix_square,}
+        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrix_square,}
 
         prox_stack = self.proximity(threshold=threshold, hardness=hardness, keep_NaNs=keep_NaNs)
         prox_mean = np.nanmean(prox_stack, axis=0)
-        fig = map_form_fn[form](matrix=prox_mean,
+        fig = map_form_fn[form](items=[prox_mean],
+                                titles=[f"$n = ${self.num_items:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}"],
                                 cmap=cmap,
-                                cbar_label="mean proximity",
-                                title=f"n = {self.num_items}")
+                                cbar_label="mean proximity")
 
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
+    
+    
+    def plot_proximity_avg_comparisons(self, thresholds:Iterable, hardnesses:Iterable,
+                                        path_to_save: str = "", form: str = "triangle", cmap="Reds"):
+        """
+        Plot comparisons of proximity average maps computed using different parameters for threshold and hardness.
+        """
+
+        assert isinstance(thresholds, Iterable)
+        assert isinstance(hardnesses, Iterable)
+        assert len(thresholds) == len(hardnesses)
+        assert isinstance(path_to_save, str)
+        assert form in ["triangle", "square"]
+
+        wflag = self._set_figsave_flag(path_to_save)
+
+        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrix_square,}
+
+        prox_avgs = [np.mean(self.proximity(threshold=thr, hardness=hrd),axis=0) \
+                     for thr, hrd in zip(thresholds, hardnesses)]
+        
+        fig = map_form_fn[form](items=prox_avgs,
+                                titles=[f"$n = ${self.num_items:,}  |  $k = ${thr} nm  |  $h = ${hrd:.1f}" \
+                                        for thr, hrd in zip(thresholds, hardnesses)],
+                                cmap=cmap,
+                                cbar_label="mean proximity")
+        
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
@@ -908,22 +939,23 @@ class PairwiseArrayStack(np.ndarray):
         return fig
 
 
-    def plot_mean_proximity_proportion(self, path_to_save:str, thresholds:list, hardness=1):
+    def plot_mean_proximity_proportion(self, thresholds:list, hardness=1, path_to_save: str = ""):
         """
-        Plot the mean proportion of pairwise values considered to be in proximity, across a range of thresholds.
+        Plot the mean proportion of pixels in proximity (within each item) across the dataset given a range of 
+        proximity thresholds.
 
-        For each threshold value, this function computes a binary proximity map (optionally using a soft sigmoid),
+        For each threshold value, this function computes a binary proximity map (or using a soft sigmoid),
         and averages the proportion of proximities across the entire stack. The result is plotted as a curve.
 
         Parameters
         ----------
-        path_to_save : str
-            File path to save the plot. If empty, the plot will not be saved.
         thresholds : list of float or single float
             One or more distance thresholds at which proximity will be computed.
         hardness : float, optional
             Controls the sharpness of the proximity thresholding. 
             A value of 1 results in hard cutoff, lower values apply a softer sigmoid (default: 1).
+        path_to_save : str
+            File path to save the plot. If empty, the plot will not be saved.
 
         Returns
         -------
@@ -987,5 +1019,3 @@ class PairwiseArrayStack(np.ndarray):
     #     plt.savefig(path.join(saving_folder, f'contact_stat_thresh_{int(thresh)}nm.png'), dpi=150
     #                 , bbox_inches='tight')
     #     plt.close()
-
-    # TODO integrate plotting log normalisation curves script from JB

@@ -24,13 +24,16 @@ import seaborn as sns
 from PIL import Image
 
 from os import path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Iterable
 from collections import Counter
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from . import helper as hp
+
+
 # Setting global matplotlib parameters
-# TODO change all properties that have a global same value (or most of the time)
+# TODO change all properties that have a global same value (or most of the time) to avoid rewriting properties
 rcParams["savefig.dpi"] = 300
 rcParams["figure.dpi"] = 300
 
@@ -82,38 +85,91 @@ def plot_line(x, y, xlabel="", ylabel="", **kwargs) -> Figure:
     return fig
 
 
-# TODO finish setting ticks, labels and colours in manuscript-ready format
 # TODO change setting from dict to x, y pairs as parameters so that multiple bar plots can be plotted on the same axis
-def plot_bar(data:dict, xlabel="", ylabel="", **kwargs):
+def plot_bar(data:dict, x:str, y:str, xlabel="", ylabel="", **kwargs):
     """
-    Create a figure and axis object, and plot the data in a manuscript-ready graphic and format
+    Create a figure and axis object, and plot the data in a bar plot in a manuscript-ready graphic and format
     """
 
-    properties = kwargs.copy()
+    assert isinstance(data, dict)
+    assert isinstance(x, str)
+    assert isinstance(y, str)
 
     fig, ax = plt.subplots()
-    fig.set_figwidth(15)
-    fig.set_figheight(9)
+    fig.set_figwidth(len(data[x]) // 2.5)
+    fig.set_figheight(6)
     ax.tick_params(axis="x", labelsize=30, which="major", pad=16, direction="in", length=8, width=1.1)
     ax.tick_params(axis="x", labelsize=22, which="minor", pad=16, direction="in", length=4, width=1)
     ax.tick_params(axis="y", labelsize=30, which="major", pad=16, direction="in", length=8, width=1.1)
     ax.tick_params(axis="y", labelsize=22, which="minor", pad=16, direction="in", length=4, width=1)
     ax.tick_params(which="both", bottom=True, top=True, left=True, right=True)
     ax.tick_params(labelbottom=True, labeltop=False, labelleft=True, labelright=False)
+    sns.barplot(data=data,
+                x=x,
+                y=y,
+                estimator="sum",
+                errorbar=None,
+                ax=ax,
+                width=0.65,
+                legend=False,
+                **kwargs)
+    ax.margins(0.03, 0.12)
+    tks = list(range(0, len(data[x]), 5))
+    ax.set_xticks(tks, data[x][::5])
+    ax.bar_label(ax.containers[0], fmt="{:.0f}", fontsize=10)
     ax.set_xlabel(xlabel, fontsize=36, fontweight=400, labelpad=28)
     ax.set_ylabel(ylabel, fontsize=36, fontweight=400, labelpad=30)
-    axbar = sns.barplot(data=data,
-                        x="barcode_id",
-                        y="efficiency",
-                        estimator="sum",
-                        errorbar=None,
-                        ax=ax,
-                        **properties)
-    axbar.bar_label(axbar.containers[0], fontsize=14)
-    axbar.set_xlabel(xlabel)
-    axbar.set_ylabel(ylabel)
-
+    
     return fig
+
+
+# # TODO finish setting ticks, labels and colours in manuscript-ready format
+# def plot_bar(data: dict | list[dict],
+#              x: str | list[str], y: str | list[str],
+#              xlabel="", ylabel="", **kwargs):
+#     """
+#     Create a figure and axis object, and plot the data in a bar plot in a manuscript-ready graphic and format
+#     """
+
+#     assert isinstance(data, (dict, list[dict]))
+#     assert isinstance(data, (list, list[str]))
+#     assert isinstance(data, (list, list[str]))
+
+#     if isinstance(data, dict):
+#         data = [data]
+#     if isinstance(x, str):
+#         x = [x]
+#     if isinstance(y, str):
+#         y = [y]
+#     assert len(x) == len(y) == len(data)
+
+#     properties = kwargs.copy()
+
+#     fig, ax = plt.subplots()
+#     for i in range(len(data)):
+#         sns.barplot(data=data[i],
+#                     x=[i],
+#                     y=[i],
+#                     estimator="sum",
+#                     errorbar=None,
+#                     ax=ax,
+#                     legend=True if i > 0 else False,
+#                     **properties)
+#     ax.bar_label(ax.containers[0], fmt=":d", fontsize=8)
+#     fig.set_figwidth(ax.get_xlim() // 2.5)
+#     fig.set_figheight(5)
+#     ax.tick_params(axis="x", labelsize=30, which="major", pad=16, direction="in", length=8, width=1.1)
+#     ax.tick_params(axis="x", labelsize=22, which="minor", pad=16, direction="in", length=4, width=1)
+#     ax.tick_params(axis="y", labelsize=30, which="major", pad=16, direction="in", length=8, width=1.1)
+#     ax.tick_params(axis="y", labelsize=22, which="minor", pad=16, direction="in", length=4, width=1)
+#     ax.tick_params(which="both", bottom=True, top=True, left=True, right=True)
+#     ax.tick_params(labelbottom=True, labeltop=False, labelleft=True, labelright=False)
+#     ax.set_xlabel(xlabel, fontsize=36, fontweight=400, labelpad=28)
+#     ax.set_ylabel(ylabel, fontsize=36, fontweight=400, labelpad=30)
+#     tks = list(range(0, len(data["barcode_id"]), 5))
+#     ax.set_xticks(tks, data["barcode_id"][::5])
+
+#     return fig
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +230,8 @@ def _edge_type(i: int, j: int, ctcf: set[int], cre: set[int]) -> str:
 
 def _odds_ratio_matrix(mat: np.ndarray, locus_dict: Dict, bright_q: float = BRIGHT_Q
                       ) -> Dict[str, Tuple[float, float]]:
-    """Return **odds ratio and p‑value** for every *EDGE_TYPES* category.
+    """
+    Return **odds ratio and p-value** for every *EDGE_TYPES* category.
 
     The 2×2 table is built *within the matrix*:
 
@@ -182,16 +239,16 @@ def _odds_ratio_matrix(mat: np.ndarray, locus_dict: Dict, bright_q: float = BRIG
     cell class    edge == category   edge ≠ category
     ============  =================  ========================
     bright        *a*                *b*
-    non‑bright    *c*                *d*
+    non-bright    *c*                *d*
     ============  =================  ========================
 
-    ``OR = (a/b) / (c/d)`` – computed by *scipy*'s ``fisher_exact`` which also
-    returns the two‑sided p‑value.
+    ``OR = (a/b) / (c/d)`` - computed by *scipy*'s ``fisher_exact`` which also
+    returns the two-sided p-value.
     """
     ctcf_bins, cre_bins = _extract_bin_sets(locus_dict)
     # NOTE changed for Bintu data since bins are barcode-based but OR calculation is matrix index-based
     ctcf_bins = [c-39 for c in ctcf_bins]
-    cre_bins = [c-39 for c in cre_bins]
+    cre_bins = [c-39 for c in cre_bins] # TODO change this because it was kept for Bintu's data
 
     bright = _bright_pairs(mat, bright_q)
     bright_total = len(bright)
@@ -216,77 +273,6 @@ def _odds_ratio_matrix(mat: np.ndarray, locus_dict: Dict, bright_q: float = BRIG
         OR, p = fisher_exact([[a, b], [c, d]])
         results[et] = (OR, p)
     return results
-
-
-def parse_locus_labels(loci_dict, lib):
-    """
-    Parsing function to handle the different labels from the json file:
-    - Handles CTCF as before, indicating the associated barcode and its orientation if it is known
-    - Handles genes by assigning a unique color to each gene's barcode - a legend for the plot will be added later
-    - Handles CREs
-    @param: loci_dict (dict): contains all the loci that should be displayed in the label axis
-    @param: lib (dataframe): library associated to the locus
-    @return: tick_dict (dict): dictionary containing for each barcode a list of tuples with the following information:
-        - group_index - will determine on which line the label will be represented (0 is by default associated to genes,
-        1 to CTCF and 2 to CREs and it corresponds to the order in the input json file)
-        - label_text - for CREs it will be the number of the CRE, for a CTCF site, its orientation
-        - the nature of group ("gene", "CTCF" or "CREs")
-        - the last entry will defer according to the nature of the label. If it is a gene, the last entry will be the
-        color code associated to the gene. Else, it will indicate the positions of the ticks.
-
-    """
-    tick_dict = {}
-    bc_list = lib["barcode_id"].tolist()
-    # gene_palette = list(mcolors.TABLEAU_COLORS.values()) + list(mcolors.CSS4_COLORS.values())
-    # color_idx = 0
-
-    for group_index, (locus_type, group_data) in enumerate(loci_dict.items()):
-        if locus_type == "CTCF":
-            orientation_map = {}
-            for orientation, barcode_list in group_data.items():
-                for p in barcode_list if isinstance(barcode_list, list) else [barcode_list]:
-                    idx = bc_list.index(p)
-                    tick = idx
-                    orientation_map.setdefault(tick, []).append(orientation)
-            for tick, orientations in orientation_map.items():
-                label_text = '\n'.join(orientations)
-                tick_dict.setdefault(tick, []).append((group_index, label_text, "CTCF"))
-            continue
-
-        if locus_type == "genes":
-            for gene, (barcodes, color) in group_data.items():
-                # color = gene_palette[color_idx % len(gene_palette)]
-                # color_idx += 1
-                for p in barcodes if isinstance(barcodes, list) else [barcodes]:
-                    idx = bc_list.index(p)
-                    tick = idx
-                    tick_dict.setdefault(tick, []).append((group_index, "", "gene", color))
-            continue
-
-        if locus_type == "CREs":
-            for cre, barcodes in group_data.items():
-                if isinstance(barcodes, list):
-                    idx_min = bc_list.index(min(barcodes))
-                    idx_max = bc_list.index(max(barcodes))
-                    tick = (idx_min + idx_max) / 2
-                    label_text = str(cre)
-                    tick_dict.setdefault(tick, []).append((group_index, label_text, "CREs", [idx_min, idx_max]))
-                else:
-                    tick = bc_list.index(barcodes)
-                    label_text = str(cre)
-                    tick_dict.setdefault(tick, []).append((group_index, label_text, "CREs", [tick, tick]))
-
-        for locus, bc in group_data.items():
-            if isinstance(bc, list):
-                idx_min = bc_list.index(min(bc))
-                idx_max = bc_list.index(max(bc))
-                tick = (idx_min + idx_max) / 2
-            else:
-                tick = bc_list.index(bc)
-            label_text = str(locus)
-            tick_dict.setdefault(tick, []).append((group_index, label_text))
-
-    return tick_dict
 
 
 def _annotate_labels(ax, tick_dict, loc_dict, lib, fontsize=12, line_sep=0.04):
@@ -437,7 +423,7 @@ def _add_gene_legend(ax, loci_dict, location='outside', anchor=(1.05, 1), fontsi
     return ax
 
 
-def _plot_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines: bool = True):
+def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines: bool = True):
     """Helper that draws a matrix as a rotated lower triangle heatmap on an existing matplotlib Axis object."""
 
     num_bins = matrix.shape[0]
@@ -453,8 +439,8 @@ def _plot_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines
     triangle = Polygon(coords, closed=True, transform=ax.transData)
     im.set_clip_path(triangle)
     # setting axis limits
-    xf = 0.03 * num_bins
-    yf = -0.25 * num_bins
+    xf = 0.05 * num_bins
+    yf = -0.05 * num_bins
     ax.set_xlim(-xf, num_bins+xf)
     ax.set_ylim(yf, num_bins*0.5)
     ax.set_aspect("equal")
@@ -463,10 +449,67 @@ def _plot_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines
     return im
 
 
-# TODO use below function to plot any number of subplots
-def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label="", title="") -> Figure:
+# # NOTE older version used for a single subplot
+# def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label="", title="") -> Figure:
+#     """
+#     Plot a 2D matrix as a triangular matrix with a colorbar
+    
+#     Parameters
+#     --------
+#     matrix : numpy.ndarray
+#         matrix to plot
+#     cmap : 
+#         colormap for the plot (default: Reds)
+#     label : str
+#         label for the colorbar (default: )
+#     """
+
+#     # Take only upper triangle by masking the lower one
+#     data = squareform(matrix) if matrix.ndim == 1 else matrix[:]
+#     lower = np.tril(data, k=-1)
+#     mask = np.tril(np.ones_like(data, dtype=bool), k=-1)
+#     data_masked = np.where(mask, lower, np.nan)
+#     # Values computed to be used in colorbar
+#     min_val = np.nanmin(data_masked)
+#     max_val = np.nanmax(data_masked)
+#     mid_val = (max_val + min_val) / 2
+#     num_bc = data_masked.shape[0]
+
+#     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 6), constrained_layout=True, dpi=300)
+#     im = _draw_2d_tri_map(data, ax=ax, cmap=cmap)    # image generated through internal routine
+
+#     axpos = ax.get_position()
+#     cax = fig.add_axes([0.1, axpos.y0 * 1.45, axpos.width, axpos.height * 0.075])
+#     cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
+#     cbar.ax.yaxis.set_label_position("right")
+#     cbar.ax.yaxis.set_ticks_position("left")
+#     cbar.set_ticks(ticks=[min_val, mid_val, max_val],
+#                    labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
+#                    fontsize=26)
+#     cbar.ax.set_xlabel(cbar_label, fontsize=22, labelpad=16)    # "Pseudocount", fontsize=font_info["tick_label"]
+#     cbar.outline.set_visible(False)
+
+#     ax.text(x=0.1, y=0.9, s=title, transform=ax.transAxes, fontsize=20)
+#     # Add barcode labels and other annotations  # TODO
+#     # ax.text(0.5, 0.55,
+#     #         f"Sample",
+#     #         transform=ax.transAxes,
+#     #         ha="center", va="bottom",
+#     #         fontsize=28, fontweight="bold")
+#     # tick_dict = parse_locus_labels(locus_dict, lib)
+#     # ax = _annotate_labels(ax, tick_dict, locus_dict, lib,
+#     #                      fontsize=font_info["tick_label"],
+#     #                      line_sep=line_sep)
+#     # _add_gene_legend(ax, locus_dict,
+#     #                 location="outside", anchor=(0, 0.5),
+#     #                 fontsize=font_info["legend"])
+
+#     return fig
+
+
+def plot_matrices_triangle(items:Iterable, titles:Iterable[str], cmap="Reds", cbar_label="") -> Figure:
     """
-    Plot a 2D matrix as a triangular matrix with a colorbar
+    Plot a grid of matrices in triangular form with a colorbar
     
     Parameters
     --------
@@ -474,49 +517,62 @@ def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label="", title=""
         matrix to plot
     cmap : 
         colormap for the plot (default: Reds)
-    label : str
-        label for the colorbar (default: )
+    cbar_label : str
+        label for the colorbar
+    
+    Returns
+    --------
+    Figure object
     """
 
-    # Take only upper triangle by masking the lower one
-    data = squareform(matrix) if matrix.ndim == 1 else matrix[:]
-    lower = np.tril(data, k=-1)
-    mask = np.tril(np.ones_like(data, dtype=bool), k=-1)
-    data_masked = np.where(mask, lower, np.nan)
-    # Values computed to be used in colorbar
-    min_val = np.nanmin(data_masked)
-    max_val = np.nanmax(data_masked)
-    mid_val = (max_val + min_val) / 2
-    num_bc = data_masked.shape[0]
-
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 6), constrained_layout=True, dpi=300)
-    im = _plot_2d_tri_map(data, ax=ax, cmap=cmap)    # image generated through internal routine
-
-    axpos = ax.get_position()
-    cax = fig.add_axes([0.1, axpos.y0 * 1.45, axpos.width, axpos.height * 0.075])
-    cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
-    cbar.ax.yaxis.set_label_position("right")
-    cbar.ax.yaxis.set_ticks_position("left")
-    cbar.set_ticks(ticks=[min_val, mid_val, max_val],
-                   labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
-                   fontsize=26)
-    cbar.ax.set_xlabel(cbar_label, fontsize=22, labelpad=16)    # "Pseudocount", fontsize=font_info["tick_label"]
-    cbar.outline.set_visible(False)
-
-    ax.text(x=0.1, y=0.9, s=title, transform=ax.transAxes, fontsize=10)
-    # Add barcode labels and other annotations  # TODO
-    # ax.text(0.5, 0.55,
-    #         f"Sample",
-    #         transform=ax.transAxes,
-    #         ha="center", va="bottom",
-    #         fontsize=28, fontweight="bold")
-    # tick_dict = parse_locus_labels(locus_dict, lib)
-    # ax = _annotate_labels(ax, tick_dict, locus_dict, lib,
-    #                      fontsize=font_info["tick_label"],
-    #                      line_sep=line_sep)
-    # _add_gene_legend(ax, locus_dict,
-    #                 location="outside", anchor=(0, 0.5),
-    #                 fontsize=font_info["legend"])
+    num_rows, num_cols = _get_grid_num_rows_cols(len(items))
+    flag = (num_cols * num_rows == 1)      # if not a grid
+    
+    fig, axs = plt.subplots(nrows=num_rows, ncols=num_cols,
+                            figsize=(num_cols*5, num_rows*3),
+                            layout="none" if flag else "tight",
+                            dpi=300)
+    
+    for ax, item, title in zip(axs.flat if num_rows * num_cols > 1 else [axs], items, titles):
+        
+        # Take only upper triangle by masking the lower one
+        mat = squareform(item) if item.ndim == 1 else item[:]
+        num_bc = mat.shape[0]
+        lower = np.tril(mat, k=-1)
+        mask = np.tril(np.ones_like(mat, dtype=bool), k=-1)
+        data_masked = np.where(mask, lower, np.nan)
+        
+        # Values computed to be used in colorbar
+        min_val = np.nanmin(data_masked)
+        max_val = np.nanmax(data_masked)
+        mid_val = (max_val + min_val) / 2
+        
+        # Drawing the map, creating space for the colorbar and drawing it
+        im = _draw_2d_tri_map(mat, ax=ax, cmap=cmap)    # using internal routine
+        ticks_bc = np.arange(0, num_bc, 3)
+        ax.set_xticks(ticks_bc)
+        for tk in ticks_bc:
+            ax.text(x=tk, y=0.095, s="|",
+                    transform=ax.get_xaxis_transform(), rotation=0,
+                    ha="center", va="top",
+                    fontsize=4, fontweight="bold", color="black")
+            ax.text(x=tk, y=0.04 if flag else 0.05, s=str(tk),
+                    transform=ax.get_xaxis_transform(), rotation=0,
+                    ha="center", va="top",
+                    fontsize=5 if flag else 8, fontweight="bold", color="black")
+        # axpos = ax.get_position()
+        # cax = fig.add_axes([axpos.x0+0.01, axpos.y0+0.05, axpos.width, axpos.height * 0.075])
+        cbar = fig.colorbar(mappable=im, ax=ax, pad=0.1 if flag else 0.06, shrink=0.5, aspect=15)
+        cbar.set_ticks(ticks=[min_val, mid_val, max_val],
+                       labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
+                       fontsize=9 if flag else 10)
+        cbar.ax.set_ylabel(cbar_label, fontsize=8, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
+        cbar.outline.set_visible(False)
+        cbar.ax.yaxis.set_label_position("right")
+        cbar.ax.yaxis.set_ticks_position("left")
+        
+        # Setting the title/text for the map
+        ax.text(x=0.04, y=0.2, s=title, transform=ax.transAxes, fontsize=6 if flag else 9, rotation=45)
 
     return fig
 
@@ -556,7 +612,7 @@ def plot_matrix_square(matrix:np.ndarray, cmap="Reds", label="") -> Figure:
     return fig
 
 
-# TODO proper plot for a common colorbar
+# TODO proper plot for a common colorbar case
 def plot_grid_2d_squares(matrices, titles=[],
                          cmap="Reds", common_cbar: bool = False, cbar_label=""):
     """
@@ -606,46 +662,6 @@ def plot_grid_2d_squares(matrices, titles=[],
     return fig
 
 
-# TODO complete script, proper plot for a common colorbar
-def plot_grid_2d_triangles(matrices, titles=[],
-                           cmap="Reds", common_cbar: bool = False, cbar_label=""):
-    """
-    Plot a tightly-spaced grid of matrices with or without a common colorbar in a triangular form.
-
-    Used for plotting examples of pairwise proximity of contact matrices, components from topic decomposition and their
-    comparisons. The number of rows and columns are automatically detected to have a square layout.
-
-    Parameters
-    --------
-    matrices : list
-        list of matrices to plot
-    
-    Returns
-    --------
-    fig : matplotlib.Figure
-        Figure object after saving the plot
-    """
-
-    matrices = [squareform(matrix) if matrix.ndim==1 else matrix[:] for matrix in matrices]
-    
-    f = 3
-    nrows, ncols = _get_grid_num_rows_cols(len(matrices))
-    print(nrows, ncols)
-    
-    fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(nrows*f, ncols*f), constrained_layout=True, dpi=300)
-
-    for matrix, ax in zip(matrices, axs.flat):
-    
-        lower = np.tril(matrix, k=-1)
-        mask = np.tril(np.ones_like(matrix, dtype=bool), k=-1)    # take only upper triangle by masking the lower one
-        matrix_masked = np.where(mask, lower, np.nan)
-        num_bc = matrix_masked.shape[0]
-
-    # TODO 
-
-    return fig
-
-
 # ---------------------------------------------------------------------------
 #  Main pyramid plot with OR overlay
 # ---------------------------------------------------------------------------
@@ -679,9 +695,9 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
     #  Base triangular heat‑map (unchanged from original)
     # ------------------------------------------------------------------
     fig, ax = plt.subplots(figsize=(10, 10))
-    im = _plot_2d_tri_map(topic_sq, ax=ax, cmap=cmap)
+    im = _draw_2d_tri_map(topic_sq, ax=ax, cmap=cmap)
 
-    tick_dict = parse_locus_labels(locus_dict, lib)
+    tick_dict = hp.parse_locus_labels(locus_dict, lib)
     ax = _annotate_labels(ax, tick_dict, locus_dict, lib,
                          fontsize=font_info["tick_label"],
                          line_sep=line_sep)

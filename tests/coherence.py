@@ -23,7 +23,7 @@ with h5py.File(path.join(dir_root,
                          "processed",
                          "bintu2018Superresolution_Hs-HCT116-40-83_wt.h5")) as fp:
     data = fp["pwds"][:]
-    data = topic3d.datatypes.PairwiseArrayStack(data).proximity(threshold=150.0, hardness=1)
+    data = topic3d.datatypes.PWDistArrayStack(data).proximity(threshold=150.0, hardness=1)
 print("Loaded used data with shape", data.shape)
 
 # Cleaned up code

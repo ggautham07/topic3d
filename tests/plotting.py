@@ -2,7 +2,7 @@ from os import path
 import numpy as np
 import h5py
 import topic3d.visualization as t3viz
-from topic3d.datatypes import CoordsArrayStack, PairwiseArrayStack
+from topic3d.datatypes import CoordsArrayStack, PWDistArrayStack
 
 dir_root = "/mnt/grey/DATA/users/gautham/Workspace/topics"
 
@@ -12,28 +12,22 @@ with h5py.File(path.join(dir_root,
                          "processed",
                          "bintu2018Superresolution_Hs-HCT116-40-83_wt.h5")) as fp:
     data_tr = CoordsArrayStack(fp["traces"][:])
-    data_pwd = PairwiseArrayStack(fp["pwds"][:])
+    data_pwd = PWDistArrayStack(fp["pwds"][:])
 print("Loaded traces with shape", data_tr.shape)
 print("Loaded pairwise distances with shape", data_pwd.shape)
 
 # effs = data_tr.efficiency(by="barcode")
 # t3viz.plot_bar({"barcode_id": np.arange(len(effs)), "efficiency": effs}, path_to_save="out/2.png")
+# data_tr.plot_bc_efficiency(path_to_save="out/3.png", color="red", alpha=0.95)
 
-thresholds = np.arange(50, 301, 50)
+# hardnesses = [0.1, 0.2, 0.3, 0.4, 0.5, 1]
+thresholds = [50, 100, 150, 150, 150, 150, 200, 250, 300]
+hardnesses = [1, 1, 0.1, 0.25, 0.5, 1, 1, 1, 1]
 
-# data.plot_mean_proximity_proportion("0.png", thresholds, hardness=0.5)
+data_pwd.plot_proximity_avg(thresholds[6], hardness=0.5, path_to_save="out/0.png", cmap="Blues")
 
-prox_by_threshold = []
-prox_avg_by_threshold = []
-for thr in thresholds:
-    prox = PairwiseArrayStack(data_pwd.proximity(threshold=thr, hardness=1))
-    prox_by_threshold.append(prox[:])
-    prox_avg_by_threshold.append(prox.ensemble())
-
-t3viz.plot_matrix_triangle(matrix=prox_avg_by_threshold[2],
-                       path_to_save="out/3.svg",
-                       cmap="Blues", cbar_label="proximity")
-
-# t3viz.plot_grid_2d_triangles(prox_avg_by_threshold, "out/3.png",
-#                              [f"$k = ${thr} nm" for thr in thresholds],
-#                              common_cbar=False, cmap="magma_r", cbar_label="proximity")
+data_pwd.plot_proximity_avg_comparisons(thresholds=thresholds,
+                                        hardnesses=hardnesses,
+                                        path_to_save="out/4.png",
+                                        form="triangle",
+                                        cmap="Blues")

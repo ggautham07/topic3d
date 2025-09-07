@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topic3d"
-version = "0.dev3"
+version = "0.dev4"
 description = "Topic decomposition of chromatin tracing data"
 requires-python = ">=3.13"
 dependencies = [
@@ -18,6 +18,9 @@ dev = [
     "umap-learn",
     "hdbscan"
 ]
+
+[project.scripts]
+topic3d-run = "main:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

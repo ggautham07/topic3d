@@ -28,7 +28,7 @@ from collections import OrderedDict
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import joblib as jl
-from .datatypes import CoordsArrayStack, PairwiseArrayStack
+from .datatypes import CoordsArrayStack, PWDistArrayStack
 from . import visualization as viz
 import warnings
 
@@ -259,7 +259,6 @@ class RawData:
         return pdata
     
     
-    # NOTE not working
     def compute_3d_vs_genomic_dists(self, max_realistic_3d_dist:Number, experiment:int, axis="X") -> pd.DataFrame:
         """
         Using the genomic distance between the barcodes, compute the median 3d distance as a function of the genomic
@@ -331,6 +330,7 @@ class RawData:
 
         return bins_mean_pos[1:] - bins_mean_pos[:-1]
     
+
     @staticmethod
     def plot_log_normalization_graph(dist_df:pd.DataFrame, dim:dict, saving_filename:str, normalized_data=False):
         """
@@ -398,7 +398,7 @@ class ProcessedData:
         self.traces = datasets.get("traces", None)
         if self.traces is not None:
             self.traces = CoordsArrayStack(self.traces)
-        self.pwds = PairwiseArrayStack(datasets.get("pwds", None))
+        self.pwds = PWDistArrayStack(datasets.get("pwds", None))
         self.bc_effs = datasets.get("bc_effs", None)
         self.metadata = attributes
 
@@ -444,10 +444,10 @@ class DecompositionResult:
         # TODO store original dataset indices of the training and testing sets using self.data_idxs = kwargs.get()
         self.data_training = kwargs.get("data_training", None)
         if self.data_training is not None:
-            assert isinstance(self.data_training, (PairwiseArrayStack, np.ndarray))
+            assert isinstance(self.data_training, (PWDistArrayStack, np.ndarray))
         self.data_testing = kwargs.get("data_testing", None)
         if self.data_testing is not None:
-            assert isinstance(self.data_testing, (PairwiseArrayStack, np.ndarray))
+            assert isinstance(self.data_testing, (PWDistArrayStack, np.ndarray))
 
 
     # TODO JSON file for the metadata, optional additional copy in HDF5 file
