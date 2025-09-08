@@ -380,25 +380,31 @@ class ProcessedData:
         self.bc_effs = None
         self.metadata = None
 
+    # TODO
+    # def __str__(self):
+    #     return (f"traces: {self.traces is not None}\n"
+    #             f"pwds: {self.pwds is not None}\n"
+    #             f"bc_effs: {self.bc_effs is not None}\n"
+    #             f"metadata: {self.metadata}\n"
+    #             )
 
-    def __str__(self):
-        return (f"traces: {self.traces is not None}\n"
-                f"pwds: {self.pwds is not None}\n"
-                f"bc_effs: {self.bc_effs is not None}\n"
-                f"metadata: {self.metadata}\n"
-                )
-
+    # @staticmethod
+    # def _assign_datatype(x):
+    #     mapping = {"traces": CoordsArrayStack,
+    #                "pwds": PWDistArrayStack}
 
     def load(self, path_to_file:str) -> None:
-        # assert path.isfile(path_to_file)
         assert path_to_file.endswith(".h5")
+        assert path.isfile(path_to_file)
         with h5py.File(path_to_file, mode="r") as handler:
             datasets = {x:y[:] for x, y in handler.items()}
             attributes = {x:y[:] for x, y in handler.attrs.items()}
         self.traces = datasets.get("traces", None)
         if self.traces is not None:
             self.traces = CoordsArrayStack(self.traces)
-        self.pwds = PWDistArrayStack(datasets.get("pwds", None))
+        self.pwds = datasets.get("pwds", None)
+        if self.pwds is not None:
+            self.pwds = PWDistArrayStack(self.pwds)
         self.bc_effs = datasets.get("bc_effs", None)
         self.metadata = attributes
 
@@ -422,7 +428,7 @@ class ProcessedData:
                     print(f"Saved {atlab} successfully as attribute")
 
 
-
+#TODO
 class DecompositionResult:
     """
     Decomposition results handler, loads and saves results, used to quickly perform further analyses on them

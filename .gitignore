@@ -1,0 +1,5 @@
+.vscode/
+src/topic3d.egg-info/
+src/topic3d/__pycache__/
+tests/out/
+data/

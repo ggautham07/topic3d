@@ -9,14 +9,11 @@ Function reference
 ------------------
 """
 
-
 import numpy as np
 import pandas as pd
 from pathlib import Path
 from numbers import Number
 
-
-########################
 
 def _bins_equilen(start, end, num_bins):
     """Generate bins of lengths that are as close to equal as possible"""
@@ -33,14 +30,13 @@ def _bins_randlen(start, end, num_bins):
     
     return bins
 
-########################
-
 
 def generate_bc_bins(start:int, end:int, num_bins:int, bin_lengths:str = "equal"):
     """
     Generate barcode targets of equal (as much as possible) or random lengths.
 
-    Generally used to perform coarse graining of polymer conformations to match traces from experiments.
+    Used mainly to perform coarse graining of polymer conformations from simulations to match 
+    traces from experiments.
 
     Parameters
     ----------
@@ -64,8 +60,6 @@ def generate_bc_bins(start:int, end:int, num_bins:int, bin_lengths:str = "equal"
 
     return tgts
 
-########################
-
 
 def monomer_idx_from_genomic_pos(positions:np.ndarray | list, start:int, monomer_size:int):
     """
@@ -88,13 +82,12 @@ def monomer_idx_from_genomic_pos(positions:np.ndarray | list, start:int, monomer
 
     return (positions - start) // monomer_size
 
-########################
-
 
 def bc_idx_from_monomer_idx(positions:np.ndarray | list, barcode_targets: np.ndarray) -> np.ndarray:
-
     """
-    Find which barcode index a monomer position falls into given a set of barcode targets. Both scalars and a vector of scalars are accepted
+    Find which barcode index a monomer position falls into given a set of barcode targets.
+    
+    Both scalars and a vector of scalars are accepted.
 
     Parameters
     ----------
@@ -111,9 +104,9 @@ def bc_idx_from_monomer_idx(positions:np.ndarray | list, barcode_targets: np.nda
 
     return np.array([np.argmax(pos < barcode_targets[:, 1]) for pos in positions])
 
-########################
 
-
+# TODO properly integrate marcnol's function with the new plotting routine
+# TODO generalize output format for other analyes
 def parse_locus_labels(loci_dict, lib):
     """
     Parsing function to handle the different labels from the json file:

@@ -122,7 +122,7 @@ class CoordsArrayStack(np.ndarray):
                [0.9, 1.1, 2.0], ...])
         """
 
-        return np.nanmean(self, axis=1)
+        return np.nanmean(self.data, axis=1)    # using self results in another CoordsArrayStack
 
 
     def pwds(self) -> PWDistArrayStack:
@@ -299,7 +299,7 @@ class CoordsArrayStack(np.ndarray):
         return (stack_imp, std_xyz) if method == "jost" else stack_imp
 
 
-    # TODO include plotting for imputed data, currently no parameter defined in the code
+    # TODO include plotting for imputed data, currently not possible due to bar plot code structure
     def plot_bc_efficiency(self, path_to_save: str = "", **kwargs):
         """
         Plot the barcode-wise detection efficiency for the dataset.
@@ -344,9 +344,6 @@ class CoordsArrayStack(np.ndarray):
         return fig
 
 
-########################################################################
-
-
 
 class PWDistArrayStack(np.ndarray):
     """
@@ -382,23 +379,6 @@ class PWDistArrayStack(np.ndarray):
         Plot ensemble-average pairwise distance matrix.
     plot_proximity_avg(path_to_save, threshold, hardness=1, form='triangle', cmap='Reds')
         Plot ensemble-average proximity matrix.
-
-    Static Methods
-    --------------
-    _make_pairwise_square_matrix_symmetric(matrix)
-        Symmetrize a square matrix.
-    _cov_from_D2_matrix(matrix)
-        Infer covariance matrix from mean-squared distances.
-    _D2_matrix_from_cov(cov)
-        Compute mean-squared distances from covariance.
-    _normalize_minmax(arr)
-        Normalize values in array to [0, 1].
-    _rescale_minmax(arr, ref)
-        Rescale arr to the range of reference array ref.
-    _regularize_pairwise_square_matrix(matrix, hack=False)
-        Make a matrix positive definite by eigenvalue correction.
-    _reorganize_pairwise_square_matrix(matrix, idxs)
-        Reorder rows/columns of matrix based on index list.
     """
 
     # Initializing using __new__ instead of __init__ in line with Numpy
@@ -442,6 +422,7 @@ class PWDistArrayStack(np.ndarray):
         if len(fp.strip()) > 0:
             return True
         return False
+
 
     # TODO class method to check symmetric matrices in the stack
     @staticmethod
@@ -614,7 +595,7 @@ class PWDistArrayStack(np.ndarray):
         return matrix_reg
 
 
-    # TODO finish the vectorised implementation for a 3D stack (now 2D matrix)
+    # TODO finish the vectorised implementation for a 3D stack (now works for a 2D matrix)
     @staticmethod
     def _reorg_pw_sq_matrix(matrix:np.ndarray, idxs) -> np.ndarray:      
         """
@@ -666,7 +647,7 @@ class PWDistArrayStack(np.ndarray):
 
     def ensemble(self, method="mean", regularize=False) -> np.ndarray:
         """
-        Compute an ensemble operation (mean, median, etc.) across the stack.
+        Perform an ensemble operation (mean, median, etc.) across the stack.
 
         Parameters
         ----------
@@ -687,15 +668,15 @@ class PWDistArrayStack(np.ndarray):
 
         if self.num_items == 1:
             warnings.warn("Note: ensemble operation being performed on an array with only one item")
-            return squareform(self._regz_pw_sq_matrix(squareform(self.data[0]))) if regularize \
-                else self.data[0][:]
+            return squareform(self._regz_pw_sq_matrix(squareform(self[0]))) if regularize \
+                else self[0][:]
         
-        ensemble_matrix = methods[method](self.data, axis=0)
+        ensemble_matrix = methods[method](self, axis=0)
         return squareform(self._regz_pw_sq_matrix(squareform(ensemble_matrix))) if regularize \
             else ensemble_matrix
 
 
-    # NOTE jb's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
+    # NOTE JB's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
     def proximity(self, threshold:Number, hardness=1, keep_NaNs=False) -> PWDistArrayStack:
         """
         Convert distances into proximity values using a sigmoid function or hard threshold.
@@ -799,13 +780,54 @@ class PWDistArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        map_form_fn = {"triangle": viz.plot_matrix_triangle, "square": viz.plot_matrix_square,}
+        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrices_square,}
 
         matrix = self.ensemble(method=method)
-        fig = map_form_fn[form](matrix=matrix,
+        fig = map_form_fn[form](items=[matrix],
+                                titles=[f"$n = ${self.num_items:,}"],
                                 cmap=cmap,
-                                cbar_label=f"{method} distance",
-                                title=f"n = {self.num_items}")
+                                cbar_label=f"{method} distance")
+        
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
+    
+
+    def plot_pwds_random_examples(self, num_items: int = 9, random_seed: int = None,
+                                  path_to_save: str = "", form: str = "triangle", cmap="Reds_r"):
+        """
+        Plot a set of randomly-picked PWD maps from the dataset.
+
+        Parameters
+        --------
+        num_items : Number
+            number of items to plot
+        random_seed : int or None
+            random seed for reproducibility
+        path_to_save : str
+            where to save the plot, if unspecified, returns only the Figure
+
+        Returns
+        --------
+        Figure
+        """
+
+        assert isinstance(num_items, int)
+        assert isinstance(path_to_save, str)
+        assert form in ["triangle", "square"]
+
+        wflag = self._set_figsave_flag(path_to_save)
+
+        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrices_square,}
+
+        random_gen = np.random.default_rng(seed=random_seed)
+        idxs = random_gen.integers(self.num_items, size=num_items)
+        
+        fig = map_form_fn[form](items=self[idxs, ...],
+                                titles=[f"Index  {i:,}" for i in idxs],
+                                cmap=cmap,
+                                cbar_label="distance")
         
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
@@ -814,8 +836,7 @@ class PWDistArrayStack(np.ndarray):
 
 
     def plot_proximity_avg(self, threshold: Number, hardness: Number = 1, keep_NaNs: bool = False,
-                           path_to_save: str = "",
-                           form: str = "triangle", cmap: str = "Reds"):
+                           path_to_save: str = "", form: str = "triangle", cmap: str = "Reds"):
         """
         Plot the ensemble-averaged proximity matrix based on a distance threshold.
 
@@ -850,7 +871,7 @@ class PWDistArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrix_square,}
+        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrices_square,}
 
         prox_stack = self.proximity(threshold=threshold, hardness=hardness, keep_NaNs=keep_NaNs)
         prox_mean = np.nanmean(prox_stack, axis=0)
@@ -879,7 +900,7 @@ class PWDistArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrix_square,}
+        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrices_square,}
 
         prox_avgs = [np.mean(self.proximity(threshold=thr, hardness=hrd),axis=0) \
                      for thr, hrd in zip(thresholds, hardnesses)]
@@ -926,11 +947,11 @@ class PWDistArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        map_form_fn = {"triangle": viz.plot_matrix_triangle, "square": viz.plot_matrix_square,}
+        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrices_square,}
 
         effs = self.efficiency(by="pixel")
-        fig = map_form_fn[form](matrix=effs,
-                                cmap="hot",
+        fig = map_form_fn[form](items=[effs],
+                                cmap="magma",
                                 cbar_label="efficiency")
 
         if wflag:

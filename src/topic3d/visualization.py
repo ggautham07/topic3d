@@ -423,14 +423,16 @@ def _add_gene_legend(ax, loci_dict, location='outside', anchor=(1.05, 1), fontsi
     return ax
 
 
-def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines: bool = True):
-    """Helper that draws a matrix as a rotated lower triangle heatmap on an existing matplotlib Axis object."""
+# TODO add gridlines possibility. With automaticallu picked color or supplied using kwargs?
+# BUG saving as png is a problem, plots become blurred due to rotation
+def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines: bool = False):
+    """Helper that draws a matrix as a rotated lower triangle heatmap on an existing matplotlib Axes object."""
 
     num_bins = matrix.shape[0]
     mask = np.triu(np.ones_like(matrix, dtype=bool))
     matrix_masked = np.ma.masked_array(matrix, mask=~mask)
 
-    im = ax.imshow(matrix_masked, origin="lower", cmap=cmap, interpolation="none")
+    im = ax.imshow(matrix_masked, origin="lower", cmap=cmap, interpolation="auto")
     # rotate ‑45° so that the matrix diagonal becomes the base of a triangle
     trans = transforms.Affine2D().rotate_deg(-45).scale(1/ math.sqrt(2), -1/ math.sqrt(2)) + ax.transData
     im.set_transform(trans)
@@ -449,72 +451,17 @@ def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines
     return im
 
 
-# # NOTE older version used for a single subplot
-# def plot_matrix_triangle(matrix:np.ndarray, cmap="Reds", cbar_label="", title="") -> Figure:
-#     """
-#     Plot a 2D matrix as a triangular matrix with a colorbar
-    
-#     Parameters
-#     --------
-#     matrix : numpy.ndarray
-#         matrix to plot
-#     cmap : 
-#         colormap for the plot (default: Reds)
-#     label : str
-#         label for the colorbar (default: )
-#     """
-
-#     # Take only upper triangle by masking the lower one
-#     data = squareform(matrix) if matrix.ndim == 1 else matrix[:]
-#     lower = np.tril(data, k=-1)
-#     mask = np.tril(np.ones_like(data, dtype=bool), k=-1)
-#     data_masked = np.where(mask, lower, np.nan)
-#     # Values computed to be used in colorbar
-#     min_val = np.nanmin(data_masked)
-#     max_val = np.nanmax(data_masked)
-#     mid_val = (max_val + min_val) / 2
-#     num_bc = data_masked.shape[0]
-
-#     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 6), constrained_layout=True, dpi=300)
-#     im = _draw_2d_tri_map(data, ax=ax, cmap=cmap)    # image generated through internal routine
-
-#     axpos = ax.get_position()
-#     cax = fig.add_axes([0.1, axpos.y0 * 1.45, axpos.width, axpos.height * 0.075])
-#     cbar = fig.colorbar(im, cax=cax, orientation="horizontal")
-#     cbar.ax.yaxis.set_label_position("right")
-#     cbar.ax.yaxis.set_ticks_position("left")
-#     cbar.set_ticks(ticks=[min_val, mid_val, max_val],
-#                    labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
-#                    fontsize=26)
-#     cbar.ax.set_xlabel(cbar_label, fontsize=22, labelpad=16)    # "Pseudocount", fontsize=font_info["tick_label"]
-#     cbar.outline.set_visible(False)
-
-#     ax.text(x=0.1, y=0.9, s=title, transform=ax.transAxes, fontsize=20)
-#     # Add barcode labels and other annotations  # TODO
-#     # ax.text(0.5, 0.55,
-#     #         f"Sample",
-#     #         transform=ax.transAxes,
-#     #         ha="center", va="bottom",
-#     #         fontsize=28, fontweight="bold")
-#     # tick_dict = parse_locus_labels(locus_dict, lib)
-#     # ax = _annotate_labels(ax, tick_dict, locus_dict, lib,
-#     #                      fontsize=font_info["tick_label"],
-#     #                      line_sep=line_sep)
-#     # _add_gene_legend(ax, locus_dict,
-#     #                 location="outside", anchor=(0, 0.5),
-#     #                 fontsize=font_info["legend"])
-
-#     return fig
-
-
-def plot_matrices_triangle(items:Iterable, titles:Iterable[str], cmap="Reds", cbar_label="") -> Figure:
+# NOTE do not change values of to axis sizes, limits and font sizes, they are optimized to fit nicely
+def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None, cmap="Reds", cbar_label="") -> Figure:
     """
     Plot a grid of matrices in triangular form with a colorbar
     
     Parameters
     --------
-    matrix : numpy.ndarray
-        matrix to plot
+    items : iterable of np.ndarray
+        matrices to plot
+    titles : iterable of str
+        titles/text to print beside the maps
     cmap : 
         colormap for the plot (default: Reds)
     cbar_label : str
@@ -525,18 +472,26 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str], cmap="Reds", cb
     Figure object
     """
 
+    if titles is None:
+        titles = [""] * len(items)
+    assert isinstance(titles, Iterable) and len(titles) == len(items)
+
     num_rows, num_cols = _get_grid_num_rows_cols(len(items))
-    flag = (num_cols * num_rows == 1)      # if not a grid
+    flag_no_grid = (num_cols * num_rows == 1)
     
     fig, axs = plt.subplots(nrows=num_rows, ncols=num_cols,
                             figsize=(num_cols*5, num_rows*3),
-                            layout="none" if flag else "tight",
+                            layout="none" if flag_no_grid else "tight",
                             dpi=300)
     
-    for ax, item, title in zip(axs.flat if num_rows * num_cols > 1 else [axs], items, titles):
+    for ax, itm, ttl in zip(axs.flat if num_rows * num_cols > 1 else [axs], items, titles):
         
         # Take only upper triangle by masking the lower one
-        mat = squareform(item) if item.ndim == 1 else item[:]
+        if itm.ndim == 1:
+            mat = squareform(itm)
+            np.fill_diagonal(mat, np.nan)
+        else:
+            mat = itm[:]
         num_bc = mat.shape[0]
         lower = np.tril(mat, k=-1)
         mask = np.tril(np.ones_like(mat, dtype=bool), k=-1)
@@ -547,74 +502,57 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str], cmap="Reds", cb
         max_val = np.nanmax(data_masked)
         mid_val = (max_val + min_val) / 2
         
-        # Drawing the map, creating space for the colorbar and drawing it
+        # Drawing the map, creating space for the colorbar and drawing that as well
         im = _draw_2d_tri_map(mat, ax=ax, cmap=cmap)    # using internal routine
-        ticks_bc = np.arange(0, num_bc, 3)
+        ticks_bc = np.arange(0, num_bc, 5)
         ax.set_xticks(ticks_bc)
         for tk in ticks_bc:
             ax.text(x=tk, y=0.095, s="|",
                     transform=ax.get_xaxis_transform(), rotation=0,
                     ha="center", va="top",
                     fontsize=4, fontweight="bold", color="black")
-            ax.text(x=tk, y=0.04 if flag else 0.05, s=str(tk),
+            ax.text(x=tk, y=0.04 if flag_no_grid else 0.05, s=str(tk),
                     transform=ax.get_xaxis_transform(), rotation=0,
                     ha="center", va="top",
-                    fontsize=5 if flag else 8, fontweight="bold", color="black")
+                    fontsize=6 if flag_no_grid else 8, fontweight="bold", color="black")
         # axpos = ax.get_position()
         # cax = fig.add_axes([axpos.x0+0.01, axpos.y0+0.05, axpos.width, axpos.height * 0.075])
-        cbar = fig.colorbar(mappable=im, ax=ax, pad=0.1 if flag else 0.06, shrink=0.5, aspect=15)
+        cbar = fig.colorbar(mappable=im, ax=ax, pad=0.1 if flag_no_grid else 0.075, shrink=0.5, aspect=15)
         cbar.set_ticks(ticks=[min_val, mid_val, max_val],
-                       labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
-                       fontsize=9 if flag else 10)
-        cbar.ax.set_ylabel(cbar_label, fontsize=8, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
+                       labels=[f"{min_val:.1f}", f"{mid_val:.1f}", f"{max_val:.1f}"],
+                       fontsize=8 if flag_no_grid else 9)
+        cbar.ax.set_ylabel(cbar_label, fontsize=10, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
         cbar.outline.set_visible(False)
         cbar.ax.yaxis.set_label_position("right")
         cbar.ax.yaxis.set_ticks_position("left")
         
         # Setting the title/text for the map
-        ax.text(x=0.04, y=0.2, s=title, transform=ax.transAxes, fontsize=6 if flag else 9, rotation=45)
+        ax.text(x=0.04, y=0.2, s=ttl, transform=ax.transAxes, fontsize=6 if flag_no_grid else 9, rotation=45)
+
+        if (flag_no_grid == False) and (len(axs.flat) > len(items)):
+            for ax in axs.flat[len(items):]:
+                # fig.delaxes(ax)
+                ax.set_axis_off()
 
     return fig
 
 
-# TODO move main plotting code to a helper function; use below function to plot any number of subplots
-# TODO     ax.text(x=0.1, y=0.9, s=title, transform=ax.transAxes, fontsize=10)
-def plot_matrix_square(matrix:np.ndarray, cmap="Reds", label="") -> Figure:
-    """ Plot a 2D matrix as a square symmetric matrix with a colorbar
-    
-    Parameters
-    --------
-    matrix : numpy.ndarray
-        matrix to plot
-    cmap : str
-        colormap for the plot (default: Reds)
-    label : str
-        label for the colorbar (default: )
-    """
+# TODO add gridlines possibility, same as for triangle map
+def _draw_2d_sq_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines: bool = False):
+    """Helper that draws a square matrix on an existing matplotlib Axes object"""
 
-    # Take only upper triangle by masking the lower one
-    data = squareform(matrix) if matrix.ndim == 1 else matrix[:]
-    num_bc = data.shape[0]
-
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6, 6), constrained_layout=True)
-    pc = ax.imshow(data, cmap=cmap)
+    im = ax.imshow(matrix, origin="lower", cmap=cmap, interpolation="auto")
+    ax.yaxis.set_inverted(True)
+    for _, spine in ax.spines.items():
+        spine.set_visible(False)
     ax.set_aspect("equal")
-    ax.axes.xaxis.set_visible(False)
-    ax.axes.yaxis.set_visible(False)
-    cb = fig.colorbar(pc, shrink=0.75, aspect=20, orientation="horizontal")
-    cb.ax.yaxis.set_label_position("right")
-    cb.ax.yaxis.set_ticks_position("left")
-    cb.set_label(label=label, labelpad=16, fontsize=20,)
-    cb.set_ticks(ticks=[data.min(), data.min()+data.max()/2, data.max()],
-                labels=[f"{data.min():.2f}", f"{(data.min()+data.max())/2:.2f}", f"{data.max():.2f}"],
-                fontsize=22)
 
-    return fig
+    return im
 
 
-# TODO proper plot for a common colorbar case
-def plot_grid_2d_squares(matrices, titles=[],
-                         cmap="Reds", common_cbar: bool = False, cbar_label=""):
+# TODO include plots for a common colorbar case
+def plot_matrices_square(items: Iterable, titles: Iterable[str] = None,
+                         cmap="Reds", cbar_label=""):
     """
     Plot a tightly-spaced grid of matrices with or without a common colorbar in a square form.
 
@@ -632,32 +570,61 @@ def plot_grid_2d_squares(matrices, titles=[],
         Figure object after saving the plot
     """
 
-    from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+    if titles is None:
+        titles = [""] * len(items)
+    assert isinstance(titles, Iterable) and len(titles) == len(items)
 
-    dratio = 3
-    num_rows, num_cols = _get_grid_num_rows_cols(len(matrices))
-    fig, axs = plt.subplots(num_rows, num_cols)
-    fig.set_figwidth(num_rows * dratio)
-    fig.set_figheight(num_cols * dratio)
-    if common_cbar:
-        fig.subplots_adjust(bottom=0.8)
-        cbar_ax = fig.add_axes([0.1, 0.01, 0.8, 0.03]) 
-    fig.set_layout_engine("tight")
-    for i, ax, matrix in zip(range(len(matrices)), axs.flat, matrices):
-        matrix = squareform(matrix) if matrix.ndim == 1 else matrix[:]
-        im = sns.heatmap(matrix,
-                         cmap=cmap,
-                         ax=ax,
-                         cbar=True,
-                         cbar_ax=cbar_ax if common_cbar else None,
-                         square=True)
-        ax.set_title(f"{titles[i]}", fontsize=12, y=1.02)
-        m, n = matrix.shape[0], matrix.shape[1]
-        ax.set_xticks(np.arange(0, m, 10, dtype=int))
-        ax.set_xticks(np.arange(0.5, m, 1), minor=True)
-        ax.set_yticks(np.arange(0, n, 10, dtype=int))
-        ax.set_yticks(np.arange(0.5, n, 1), minor=True)
-        ax.tick_params(which="minor", bottom=False, left=False)
+    num_rows, num_cols = _get_grid_num_rows_cols(len(items))
+    flag_no_grid = (num_cols * num_rows == 1)
+
+    num_rows, num_cols = _get_grid_num_rows_cols(len(items))
+    fig, axs = plt.subplots(nrows=num_rows, ncols=num_cols,
+                            figsize=(num_cols*5, num_rows*4),
+                            layout="none",
+                            dpi=300)
+    # if common_cbar:
+        # fig.subplots_adjust(bottom=0.8)
+        # cbar_ax = fig.add_axes([0.1, 0.01, 0.8, 0.03])
+
+    for ax, itm, ttl in zip(axs.flat if num_rows * num_cols > 1 else [axs], items, titles):
+        
+        if itm.ndim == 1:
+            mat = squareform(itm)
+            np.fill_diagonal(mat, np.nan)
+        else:
+            mat = itm[:]
+        num_bc = mat.shape[0]
+        
+        # Values computed to be used in colorbar
+        min_val = np.nanmin(mat)
+        max_val = np.nanmax(mat)
+        mid_val = (max_val + min_val) / 2
+        
+        # Drawing the map, creating space for the colorbar and drawing that as well
+        im = _draw_2d_sq_map(mat, ax=ax, cmap=cmap)    # using internal routine
+        ticks_bc = np.arange(0, num_bc, 5)
+        ax.tick_params(bottom=True, top=True, right=True, left=True)
+        ax.set_xticks(ticks_bc)
+        ax.set_yticks(ticks_bc)
+        ax.set_xticklabels(ticks_bc, fontsize=8 if flag_no_grid else 9, fontweight="bold", color="black")
+        ax.set_yticklabels(ticks_bc, fontsize=8 if flag_no_grid else 9, fontweight="bold", color="black")
+
+        cbar = fig.colorbar(mappable=im, ax=ax, pad=0.175 if flag_no_grid else 0.225, shrink=0.5, aspect=15)
+        cbar.set_ticks(ticks=[min_val, mid_val, max_val],
+                       labels=[f"{min_val:.1f}", f"{mid_val:.1f}", f"{max_val:.1f}"],
+                       fontsize=9 if flag_no_grid else 11)
+        cbar.ax.set_ylabel(cbar_label, fontsize=11 if flag_no_grid else 12, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
+        cbar.outline.set_visible(False)
+        cbar.ax.yaxis.set_label_position("right")
+        cbar.ax.yaxis.set_ticks_position("left")
+        
+        # Setting the title/text for the map
+        ax.set_title(ttl, fontsize=10 if flag_no_grid else 13, loc="center", y=1.025)
+
+        if (flag_no_grid == False) and (len(axs.flat) > len(items)):
+            for ax in axs.flat[len(items):]:
+                # fig.delaxes(ax)
+                ax.set_axis_off()
     
     return fig
 
