@@ -12,7 +12,6 @@ Data types for topic decomposition (:mod:`topic3d.datatypes`)
 # =============================================================================
 
 from __future__ import annotations      # required for type hinting a class method returning an instance of the class
-from os import path
 import warnings
 from typing import Iterable
 from numbers import Number
@@ -22,7 +21,7 @@ from scipy.spatial.distance import squareform, pdist
 from scipy.linalg import issymmetric
 
 import matplotlib.pyplot as plt
-from . import visualization as viz
+from . import visualization as vzl
 
 
 # =============================================================================
@@ -333,7 +332,7 @@ class CoordsArrayStack(np.ndarray):
         #     stack_imp = self.impute(method="naive")
         #     effs_imp = stack_imp.efficiency(by="barcode")
 
-        fig = viz.plot_bar(data={"barcode_id": np.arange(self.num_bc),"efficiency": effs},
+        fig = vzl.plot_bar(data={"barcode_id": np.arange(self.num_bc),"efficiency": effs},
                            x="barcode_id", y="efficiency",
                            xlabel="Barcode #", ylabel="Efficiency",
                            **kwargs)
@@ -780,7 +779,7 @@ class PWDistArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrices_square,}
+        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
         matrix = self.ensemble(method=method)
         fig = map_form_fn[form](items=[matrix],
@@ -819,7 +818,7 @@ class PWDistArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrices_square,}
+        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
         random_gen = np.random.default_rng(seed=random_seed)
         idxs = random_gen.integers(self.num_items, size=num_items)
@@ -871,7 +870,7 @@ class PWDistArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrices_square,}
+        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
         prox_stack = self.proximity(threshold=threshold, hardness=hardness, keep_NaNs=keep_NaNs)
         prox_mean = np.nanmean(prox_stack, axis=0)
@@ -900,7 +899,7 @@ class PWDistArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrices_square,}
+        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
         prox_avgs = [np.mean(self.proximity(threshold=thr, hardness=hrd),axis=0) \
                      for thr, hrd in zip(thresholds, hardnesses)]
@@ -947,7 +946,7 @@ class PWDistArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        map_form_fn = {"triangle": viz.plot_matrices_triangle, "square": viz.plot_matrices_square,}
+        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
         effs = self.efficiency(by="pixel")
         fig = map_form_fn[form](items=[effs],
@@ -1003,7 +1002,7 @@ class PWDistArrayStack(np.ndarray):
                 stack = np.where(stack >= 0.75, 1, 0)
             prop_means[i] = np.mean(stack)
 
-        fig = viz.plot_line(x=thresholds, y=prop_means,
+        fig = vzl.plot_line(x=thresholds, y=prop_means,
                             xlabel="Proximity threshold", ylabel="Mean proximity proportion",
                             linestyle="-", linewidth=4,
                             marker="o", markersize=16)

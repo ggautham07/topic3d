@@ -1,11 +1,14 @@
-import sys
 from os import path, makedirs
-from time import perf_counter
+import sys
 import logging
+import warnings
+from time import perf_counter
+from numbers import Number
 import json
 import numpy as np
 from sklearn.decomposition import LatentDirichletAllocation
-from numbers import Number
+
+from topic3d.handlers import DecompositionResult
 
 
 # Function to configure logging
@@ -35,11 +38,107 @@ def readable_duration(duration:Number):
     return f"{hours} hours, {minutes} minutes and {remaining} seconds"
 
 
+def assign_train_test_data(unique_id, data:np.ndarray, train_data_proportion: Number = 1):
+    """
+    Assign train and test data randomly based on train data proportion
+    """
 
-def run_decomposition(data_path,
+    assert isinstance(data, np.ndarray)
+    assert isinstance(train_data_proportion, Number) and 0 < train_data_proportion <= 1
+    if 0 < train_data_proportion <= 0.2:
+        warnings.warn(f"Train data proportion {train_data_proportion} might be too low")
+
+    if train_data_proportion < 1:
+        data_idxs = np.arange(data.shape[0], dtype=int)
+        train_idxs = np.random.choice(data_idxs, size=int(train_data_proportion * len(data_idxs)), replace=False)
+        test_idxs = np.delete(data_idxs, train_idxs)
+        assert np.array_equal(data_idxs, np.sort(np.concatenate((train_idxs, test_idxs))))
+        fit_transform_flag = False
+    else:
+        fit_transform_flag = True
+
+    if fit_transform_flag:
+        data_train = data[:][np.random.choice(np.arange(data.shape[0]), size=data.shape[0], replace=False)] # data[:]
+        print(np.sum(data_train[0]))
+        logging.info(f"[{unique_id}] Training and testing data shape: {data_train.shape}")
+
+    if not fit_transform_flag:
+        data_train = data[train_idxs]
+        data_test = data[test_idxs]
+        logging.info(f"[{unique_id}] Training data shape: {data_train.shape}, Testing data shape: {data_test.shape}")
+
+
+
+def run_decomposition(data: np.ndarray, params: dict, dir_to_save: str = "", logger = None):
+    """
+    Run topic decomposition on data with parameters given.
+    Saves results to path_to_save while actively logging.
+    """
+    
+    assert isinstance(data, np.ndarray) and data.ndim == 2
+    assert isinstance(params, dict)
+    assert isinstance(dir_to_save, str)
+    wflag = False
+    if len(dir_to_save) > 0:
+        assert path.isdir(dir_to_save)     # maybe add makedirs support?
+        wflag = True
+
+    num_items, num_pixels = data.shape
+
+    # instantiate the LDA model class
+    try:
+        model = LatentDirichletAllocation(n_components=params["num_components"],
+                                          max_iter=params["max_iter"],
+                                          n_jobs=params["num_jobs"],
+                                          learning_method=params["learning_method"],
+                                          batch_size=params["batch_size"] \
+                                            if params["learning_method"] == "online" else None,
+                                          random_state=params["random_seed"])
+    except Exception as err:
+        pass
+        # logging.error(f"Error occurred during LDA instantiation: {str(err)}")
+
+    # performing the training and transformation of data to get results
+    try:
+        decomposition = model.fit_transform(data)
+        # elapsed_time = readable_duration(perf_counter() - start)
+    except Exception as err:
+        pass
+        # logging.error(f"Error occurred during LDA training: {str(err)}")
+
+    try:
+        results = DecompositionResult(model=model,
+                                      decomposition=decomposition,
+                                      data_training=np.arange(data.shape[0]),
+                                      params=params)
+        if wflag:
+            results.save(dir_to_save=dir_to_save)
+            results.plot_components(ordered=False, path_to_save=path.join(dir_to_save, "components.svg"))
+            results.plot_components(ordered=True, path_to_save=path.join(dir_to_save, "components_sorted.svg"))
+            results.plot_decomposition(path_to_save=path.join(dir_to_save, "decomposition.svg"), cmap="Blues")
+        # results.embed_decomposition
+    except Exception as err:
+        pass
+        # logging.error(f"Error occurred during the compiling and saving of results: {str(err)}")
+
+    return results
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def main(path_to_data,
                       tag,
                       file_to_process,
-                    #   efficiency,
                       num_components,
                       contact_threshold,
                       max_iter,
@@ -47,7 +146,6 @@ def run_decomposition(data_path,
                       num_jobs,
                       train_data_proportion,
                       unique_id,
-                    #   min_efficiency,
                       batch_size=None,
                       random_seed=None,):
 
@@ -57,11 +155,11 @@ def run_decomposition(data_path,
     # Setup the output file path
     unique_id = str(unique_id)[:6]
     if learning_method == "online":
-        training_path_pattern = data_path + (
+        training_path_pattern = path_to_data + (
             f"/training/{tag}/{num_components:02d}-components_threshold={contact_threshold}"
             f"_maxiters={max_iter}_{learning_method}_data_prop_{train_data_proportion}_batch_{batch_size}_")
     else:
-        training_path_pattern = data_path + (
+        training_path_pattern = path_to_data + (
             f"/training/{tag}/{num_components:02d}-components_threshold={contact_threshold}"
             f"_maxiters={max_iter}_{learning_method}_data_prop_{train_data_proportion}_")
 
@@ -76,7 +174,7 @@ def run_decomposition(data_path,
     logging.info("-" * 50)
 
     summary = {
-        "data_path": data_path,
+        "data_path": path_to_data,
         "tag": tag,
         "file_to_process": file_to_process,
         # "efficiency_file_to_process": efficiency,
@@ -148,32 +246,8 @@ def run_decomposition(data_path,
         data[np.isnan(data)] = 0
     else:
         raise ValueError("Contact threshold not suitable")
+    
 
-## Define the training and testing sets
-## ====================================
-
-    # # filter the data with an efficiency lower than the threshold
-    # data = data[raw_data_efficiency >= min_efficiency]
-
-    # based on the selected data proportion, define the training and testing sets
-    if train_data_proportion < 1:
-        data_idxs = np.arange(data.shape[0], dtype=int)
-        train_idxs = np.random.choice(data_idxs, size=int(train_data_proportion * len(data_idxs)), replace=False)
-        test_idxs = np.delete(data_idxs, train_idxs)
-        assert np.array_equal(data_idxs, np.sort(np.concatenate((train_idxs, test_idxs))))
-        fit_transform_flag = False
-    else:
-        fit_transform_flag = True
-
-    if fit_transform_flag:
-        data_train = data[:][np.random.choice(np.arange(data.shape[0]), size=data.shape[0], replace=False)] # data[:]
-        print(np.sum(data_train[0]))
-        logging.info(f"[{unique_id}] Training and testing data shape: {data_train.shape}")
-
-    if not fit_transform_flag:
-        data_train = data[train_idxs]
-        data_test = data[test_idxs]
-        logging.info(f"[{unique_id}] Training data shape: {data_train.shape}, Testing data shape: {data_test.shape}")
 
     # computing mean contact matrix
     contact_matrix = squareform(

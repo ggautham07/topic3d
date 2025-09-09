@@ -15,22 +15,26 @@ Function reference
 # =============================================================================
 
 from __future__ import annotations
-from numbers import Number
 from os import path
+import warnings
 from io import StringIO
+from numbers import Number
+
+from itertools import combinations
+import joblib as jl
+
 import h5py
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import squareform, pdist
 from sklearn.decomposition import LatentDirichletAllocation
-from itertools import combinations
-from collections import OrderedDict
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-import joblib as jl
+
+import matplotlib.pyplot as plt
+
 from .datatypes import CoordsArrayStack, PWDistArrayStack
-from . import visualization as viz
-import warnings
+from . import visualization as vzl
 
 
 
@@ -56,7 +60,7 @@ class RawData:
         self.num_traces = None
         self.num_bc = None
         self.bc_ids = None
-        self.sources = None
+        self.source = None
 
 
     def __str__(self):
@@ -179,7 +183,7 @@ class RawData:
         """
 
         assert path.isfile(path_to_file)
-        self.sources = [path_to_file]
+        self.source = [path_to_file]
 
         if path_to_file.endswith(".npy"):
             self.traces = CoordsArrayStack(np.load(path_to_file, allow_pickle=True))
@@ -250,7 +254,7 @@ class RawData:
         pdata.metadata = {"num_traces": self.num_traces,
                           "num_bc": self.num_bc,
                           "bc_ids": self.bc_ids,
-                          "sources": self.sources}
+                          "source": self.source}
         if self.library is not None:
             pdata.metadata.update({"bc_bins": self.bc_bins,
                                    "bc_bins_sizes": self.bc_bins_sizes,
@@ -369,7 +373,7 @@ class ProcessedData:
     """
     Handler for processed data, both loading and saving
     
-    Methods for plotting, computations can be performed on CoordsArrayStack and PairwiseArrayStack
+    Methods for plotting, computations can be performed on CoordsArrayStack and PWDistsArrayStack
     
     Metadata includes barcode list, their genomic bins and detection efficiencies
     """
@@ -380,18 +384,20 @@ class ProcessedData:
         self.bc_effs = None
         self.metadata = None
 
-    # TODO
-    # def __str__(self):
-    #     return (f"traces: {self.traces is not None}\n"
-    #             f"pwds: {self.pwds is not None}\n"
-    #             f"bc_effs: {self.bc_effs is not None}\n"
-    #             f"metadata: {self.metadata}\n"
-    #             )
+ 
+    def __str__(self):
+        out = ["ProcessedData object"]
+        avail_tr = False
+        if self.traces is not None and isinstance(self.traces, np.ndarray):
+            avail_tr = True
+            out.append(f"Traces array: {'available' if avail_tr else 'unavailable'}")
+        avail_pwds = False
+        if self.pwds is not None and isinstance(self.pwds, np.ndarray):
+            avail_pwds = True
+            out.append(f"PWDists array: {'available' if avail_pwds else 'unavailable'}")
+        out = "\n".join(out)
+        return out
 
-    # @staticmethod
-    # def _assign_datatype(x):
-    #     mapping = {"traces": CoordsArrayStack,
-    #                "pwds": PWDistArrayStack}
 
     def load(self, path_to_file:str) -> None:
         assert path_to_file.endswith(".h5")
@@ -409,23 +415,23 @@ class ProcessedData:
         self.metadata = attributes
 
 
-    def save(self, path_to_file:str, replace=True) -> None:
+    def save(self, path_to_file: str, replace: bool = True) -> None:
         if path.isfile(path_to_file) and not replace:
             raise FileExistsError("File already exists and replace is set to False")
         attr_labels = [attr for attr in dir(self) if not callable(getattr(self, attr)) and not attr.startswith("__")]
-        print(attr_labels)
+        print("Saving the following attributes: ", attr_labels)     # TODO change the printing to cleaner format
         with h5py.File(path_to_file, mode="w") as handler:
-            for atlab in attr_labels:
-                attr = getattr(self, atlab)
+            for lbl in attr_labels:
+                attr = getattr(self, lbl)
                 try:
-                    print(atlab, type(attr), attr.dtype)
-                    handler.create_dataset(name=atlab, data=attr)
-                    print(f"Saved {atlab} successfully")
+                    print(lbl, type(attr), attr.dtype)
+                    handler.create_dataset(name=lbl, data=attr)
+                    print(f"Saved {lbl} successfully")
                 except AttributeError:
                     pass
                 except TypeError:
-                    handler.attrs[atlab] = attr
-                    print(f"Saved {atlab} successfully as attribute")
+                    handler.attrs[lbl] = attr
+                    print(f"Saved {lbl} successfully as attribute")
 
 
 #TODO
@@ -443,20 +449,20 @@ class DecompositionResult:
         self.model = model
         self.decomposition = decomposition
         self.components = model.components_
+        self.components_norm = self.components / np.sum(self.components, axis=1)[:, np.newaxis]
         self.num_components = len(self.components)
         self.num_items = len(self.decomposition)
         self.metadata = kwargs.copy()
         
-        # TODO store original dataset indices of the training and testing sets using self.data_idxs = kwargs.get()
-        self.data_training = kwargs.get("data_training", None)
-        if self.data_training is not None:
-            assert isinstance(self.data_training, (PWDistArrayStack, np.ndarray))
-        self.data_testing = kwargs.get("data_testing", None)
-        if self.data_testing is not None:
-            assert isinstance(self.data_testing, (PWDistArrayStack, np.ndarray))
+        # # TODO store original dataset indices of the training and testing sets using self.data_idxs = kwargs.get()
+        # self.data_training = self.metadata.get("data_training", None)
+        # if self.data_training is not None:
+        #     assert isinstance(self.data_training, (PWDistArrayStack, np.ndarray))
+        # self.data_testing = self.metadata.get("data_testing", None)
+        # if self.data_testing is not None:
+        #     assert isinstance(self.data_testing, (PWDistArrayStack, np.ndarray))
 
 
-    # TODO JSON file for the metadata, optional additional copy in HDF5 file
     def save(self, dir_to_save:str):
         """
         Save the decomposition results to a joblib file for the model, JSON file for metadata and a 
@@ -466,19 +472,19 @@ class DecompositionResult:
         with h5py.File(path.join(dir_to_save, "results.h5"), mode="w") as handler:
             handler.create_dataset(name="components", data=self.components)
             handler.create_dataset(name="decomposition", data=self.decomposition)
-            handler.create_dataset(name="data_training", data=self.data_training)
-            handler.create_dataset(name="data_testing", data=self.data_testing)
+            handler.create_dataset(name="data_idxs/training", data=self.data_training)
+            handler.create_dataset(name="data_idxs/testing", data=self.data_testing)
             handler.attrs = self.metadata
         
         jl.dump(self.model, path.join(dir_to_save, "model_lda.jl"))
 
 
-    def reconstruction(self, normalize_components=False):
+    def reconstruction(self, normalize=False):
         """
         Reconstruct individual contact vectors using the captured components and the decomposition matrix.
         """
 
-        if normalize_components:
+        if normalize:
             components_norm = self.components / self.components.sum(axis=1)[:, np.newaxis]
             return self.decomposition @ components_norm
         return self.decomposition @ self.components
@@ -487,10 +493,8 @@ class DecompositionResult:
     # TODO automatic extraction of threshold from a weights distribution, preferably multiple options
     @staticmethod
     def _extract_threshold(X):
-        return X
+        return np.quantile(X, 10)
 
-
-    # TODO adding automatic threshold extraction using internal function
     def representativity(self, threshold=None):
         if threshold is None:
             threshold = self._extract_threshold(self.decomposition)
@@ -665,18 +669,37 @@ class DecompositionResult:
                                                      randomize_data=False))
 
         return tuple(out)
-    
 
-    def plot_components(self, path_to_save: str, cmap: str = "Reds", common_cbar: bool = False):
-        
-        fig = viz.plot_grid_2d_squares(self.components, titles=[f"T{i}" for i in range(self.num_components)],
-                                       cmap=cmap, common_cbar=common_cbar, cbar_label="pseudocount")
 
+    # TODO add common_cbar in plotting
+    def plot_components(self, normalized: bool = False, ordered: bool = False, 
+                        path_to_save: str = "", form: str = "triangle", cmap: str = "Reds"):
+
+        wflag = self._set_figsave_flag(path_to_save)
+
+        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
+
+        reps = np.mean(self.decomposition > 0.3, axis=0)
+
+        if ordered:
+            idxs = self.sort_components(threshold=0.3)
+            items_to_plot = self.components_norm[idxs,:] if normalized else self.components[idxs,:]
+        else:
+            items_to_plot = self.components_norm if normalized else self.components
+
+        titles = [f"T{i}  |  $\\rho = ${r}" for i, r in enumerate(reps)]
+        fig = map_form_fn[form](items=items_to_plot,
+                                titles=titles,
+                                cmap=cmap, cbar_label="norm. pseudocount" if normalized else "pseudocount")
+
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
         return fig
     
 
     # TODO
-    def plot_decomposition(self, cmap: str = "Reds"):
+    def plot_decomposition(self, path_to_save: str = "", cmap: str = "Reds"):
         # fig = plt.figure(figsize=(10, 10))
         # ax = fig.add_subplot(1, 1, 1)
         # sns.heatmap(lda_decomposition_ordered, cmap="coolwarm", ax=ax)
