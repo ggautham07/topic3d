@@ -1,23 +1,27 @@
 from os import path, makedirs
+from glob import glob
 import sys
 import logging
 import warnings
+from uuid import uuid4
 from time import perf_counter
 from numbers import Number
 import json
 import numpy as np
+import h5py
 from sklearn.decomposition import LatentDirichletAllocation
 
-from topic3d.handlers import DecompositionResult
+from topic3d.datatypes import CoordsArrayStack, PWDistArrayStack
+from topic3d.handlers import ProcessedData, DecompositionResult
 
 
 # Function to configure logging
-def setup_logging(log_file):
+def _setup_logging(fp):
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
         handlers=[
-            logging.FileHandler(log_file),
+            logging.FileHandler(fp),
             logging.StreamHandler(sys.stdout)
         ]
     )
@@ -38,10 +42,125 @@ def readable_duration(duration:Number):
     return f"{hours} hours, {minutes} minutes and {remaining} seconds"
 
 
-def assign_train_test_data(unique_id, data:np.ndarray, train_data_proportion: Number = 1):
+##################################################################################################################
+
+
+def initialize(tag: str, dir_data: str, dir_base: str, params: dict):
+    """
+    Initialize the directory to train data and save results
+    """
+
+    uid = str(uuid4())[:6]
+
+    dir_pattern = f"{params["num_components"]:02d}-components_threshold={params["threshold"]}"
+    dir_training = path.join(dir_base, tag, dir_pattern + f"{uid}")
+    makedirs(dir_training, exist_ok=False)
+
+    # Setup the log file path (in the same folder as the training)
+    log_file = path.join(dir_training, f"{uid}.log")
+
+    # Setup logging to file and console
+    _setup_logging(log_file)
+    logging.info("-" * 50)
+    logging.info(f"[{uid}] Will save trainings to: {dir_training}")
+
+    summary = params.copy()
+    summary.update({"path_to_data": dir_data,
+                    "tag": tag,
+                    "path_to_training": dir_training,
+                    "log": log_file})
+
+    logging.info(f"Settings summary for run: {uid}")
+    for key in summary.keys():
+        logging.info(f" {key}: {summary[key]}")
+    json.dump(summary, open(dir_training, mode="x"), indent=4)
+
+    return summary
+
+
+def load_data(path_, tag: str) -> (np.ndarray | ProcessedData | dict):
+    """
+    Load PWD dataset (with other datasets in case of HDF5) from a file.
+    """
+
+    assert isinstance(path_, str)
+    if path.isdir(path_):
+        assert isinstance(tag, str)
+        fp = glob(path.join(path_, tag+"*.npy")) + glob(path.join(path_, tag+"*.h5"))
+        if len(fp) == 0:
+            warnings.warn(f"No Numpy or HDF5 file(s) found in {path_} with {tag}")
+            raise FileNotFoundError
+        elif len(fp) > 1:
+            warnings.warn(f"Multiple files found, loading {fp[0]}")       
+    elif path.isfile(path_):
+        fp = path_
+    else:
+        warnings.warn(f"{path_} is not a file and does not exist")
+        raise FileNotFoundError
+    
+    if fp.endswith(".npy"):
+        return np.load(fp, allow_pickle=True)
+    
+    try:
+        dataobj = ProcessedData()
+        dataobj.load(fp)
+    except AssertionError or KeyError:
+        with h5py.File(fp, mode="r") as handler:
+            dataobj = {x:y[:] for x, y in handler.items()}
+            dataobj.update({x:y[:] for x, y in handler.attrs.items()})
+
+    return dataobj
+
+
+def prep_data(data: ProcessedData | dict, params: dict, dir_to_save: str = ""):
+    """
+    Process the PWD data supplied to filter by efficiency of barcode detection and generate proximity vectors.
+
+    Then pick data proportion
+    """
+
+    def _get_val(X, k, f):
+        return X[k][:] if f else X.k[:]
+
+    assert isinstance(dir_to_save, str)
+    assert isinstance(params, dict)
+    assert isinstance(data, (ProcessedData, dict))
+    
+    is_dict = True if isinstance(data, dict) else False
+    pwds = _get_val(data, "pwds", is_dict)
+    assert isinstance(pwds, np.ndarray)
+    if not isinstance(pwds, PWDistArrayStack):
+        pwds = PWDistArrayStack(pwds)
+
+    min_efficiency = params.get("min_efficiency")
+    if min_efficiency is not None:
+        traces = _get_val(data, "traces", is_dict)
+        assert isinstance(traces, np.ndarray)
+        traces = CoordsArrayStack(traces)
+        _, idxs = traces.filter(min_efficiency=min_efficiency, by="item", return_idxs=True)
+
+    pwds_filt = PWDistArrayStack(pwds[idxs,:][:])
+    proximity = pwds_filt.proximity(threshold=params["threshold"], hardness=params["hardness"])
+    proximity_avg = np.nanmean(proximity, axis=0)    
+    
+    if len(dir_to_save) > 0 and path.isdir(dir_to_save):
+        logging.info(f"Plotting mean proximity matrix, type/shape: {type(proximity_avg)}/{proximity_avg.shape}")
+        pwds_filt.plot_proximity_avg(threshold=params["threshold"], hardness=params["hardness"], keep_NaNs=False,
+                                     path_to_save=path.join(dir_to_save, "proximity_avg.svg"))
+        logging.info(f"Plotting randomly-picked examples of proximity matrices")
+        pwds_filt.plot_proximity_random_examples(threshold=params["threshold"], hardness=params["hardness"],
+                                                 num_items=16,
+                                                 path_to_save=path.join(dir_to_save, "proximity_random_examples.svg"))
+
+    return proximity
+
+
+def split_data(data:np.ndarray, train_data_proportion: Number = 1, **kwargs):
     """
     Assign train and test data randomly based on train data proportion
     """
+
+    uid = kwargs(uid, "NO-ID")
 
     assert isinstance(data, np.ndarray)
     assert isinstance(train_data_proportion, Number) and 0 < train_data_proportion <= 1
@@ -53,39 +172,44 @@ def assign_train_test_data(unique_id, data:np.ndarray, train_data_proportion: Nu
         train_idxs = np.random.choice(data_idxs, size=int(train_data_proportion * len(data_idxs)), replace=False)
         test_idxs = np.delete(data_idxs, train_idxs)
         assert np.array_equal(data_idxs, np.sort(np.concatenate((train_idxs, test_idxs))))
-        fit_transform_flag = False
+        flag_fit_trans = False
     else:
-        fit_transform_flag = True
+        flag_fit_trans = True
 
-    if fit_transform_flag:
+    if flag_fit_trans:
         data_train = data[:][np.random.choice(np.arange(data.shape[0]), size=data.shape[0], replace=False)] # data[:]
         print(np.sum(data_train[0]))
-        logging.info(f"[{unique_id}] Training and testing data shape: {data_train.shape}")
+        logging.info(f"[{uid}] Training and testing data shape: {data_train.shape}")
+        return data_train
 
-    if not fit_transform_flag:
+    if not flag_fit_trans:
         data_train = data[train_idxs]
         data_test = data[test_idxs]
-        logging.info(f"[{unique_id}] Training data shape: {data_train.shape}, Testing data shape: {data_test.shape}")
+        logging.info(f"[{uid}] Training data shape: {data_train.shape}, Testing data shape: {data_test.shape}")
+        return data_train, data_test
 
 
-
-def run_decomposition(data: np.ndarray, params: dict, dir_to_save: str = "", logger = None):
+# TODO include training and testing data indices so that the data is split using split_data()
+def decompose(data: np.ndarray, params: dict, dir_to_save: str = "", **kwargs):
     """
     Run topic decomposition on data with parameters given.
     Saves results to path_to_save while actively logging.
     """
     
     assert isinstance(data, np.ndarray) and data.ndim == 2
+    d = int(np.ceil(np.sqrt(data.shape[-1] * 2)))
+    assert d * (d-1) == data.shape[-1] * 2  # ensure that vector can be squareformed
     assert isinstance(params, dict)
     assert isinstance(dir_to_save, str)
     wflag = False
     if len(dir_to_save) > 0:
-        assert path.isdir(dir_to_save)     # maybe add makedirs support?
+        assert path.isdir(dir_to_save)  # directory must be created in initialization of unique ID
         wflag = True
 
-    num_items, num_pixels = data.shape
+    uid = kwargs.get("uid", "NO-ID")
 
-    # instantiate the LDA model class
+    # instantiate the LDA model
+    logging.info(f"[{uid}] Getting training ready in {dir_to_save}")
     try:
         model = LatentDirichletAllocation(n_components=params["num_components"],
                                           max_iter=params["max_iter"],
@@ -95,16 +219,16 @@ def run_decomposition(data: np.ndarray, params: dict, dir_to_save: str = "", log
                                             if params["learning_method"] == "online" else None,
                                           random_state=params["random_seed"])
     except Exception as err:
-        pass
-        # logging.error(f"Error occurred during LDA instantiation: {str(err)}")
+        logging.error(f"Error occurred during LDA instantiation: {str(err)}")
 
     # performing the training and transformation of data to get results
     try:
+        logging.info(f"[{uid}] Starting training...")
+        time_start = perf_counter()
         decomposition = model.fit_transform(data)
-        # elapsed_time = readable_duration(perf_counter() - start)
+        logging.info(f"[{uid}] Training finished successfully")
     except Exception as err:
-        pass
-        # logging.error(f"Error occurred during LDA training: {str(err)}")
+        logging.error(f"Error occurred during LDA training: {str(err)}")
 
     try:
         results = DecompositionResult(model=model,
@@ -116,226 +240,48 @@ def run_decomposition(data: np.ndarray, params: dict, dir_to_save: str = "", log
             results.plot_components(ordered=False, path_to_save=path.join(dir_to_save, "components.svg"))
             results.plot_components(ordered=True, path_to_save=path.join(dir_to_save, "components_sorted.svg"))
             results.plot_decomposition(path_to_save=path.join(dir_to_save, "decomposition.svg"), cmap="Blues")
-        # results.embed_decomposition
+            logging.info(f"[{uid}] Saved results in {dir_to_save}")
     except Exception as err:
-        pass
-        # logging.error(f"Error occurred during the compiling and saving of results: {str(err)}")
+        logging.error(f"Error occurred during the compiling and saving of results: {str(err)}")
+
+    time_elapsed = readable_duration(perf_counter() - time_start)
+    logging.info(f"[{uid}] Completed in {time_elapsed}")
 
     return results
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-def main(path_to_data,
-                      tag,
-                      file_to_process,
-                      num_components,
-                      contact_threshold,
-                      max_iter,
-                      learning_method,
-                      num_jobs,
-                      train_data_proportion,
-                      unique_id,
-                      batch_size=None,
-                      random_seed=None,):
-
-## Define the training folder and the log
-## ======================================
-
-    # Setup the output file path
-    unique_id = str(unique_id)[:6]
-    if learning_method == "online":
-        training_path_pattern = path_to_data + (
-            f"/training/{tag}/{num_components:02d}-components_threshold={contact_threshold}"
-            f"_maxiters={max_iter}_{learning_method}_data_prop_{train_data_proportion}_batch_{batch_size}_")
-    else:
-        training_path_pattern = path_to_data + (
-            f"/training/{tag}/{num_components:02d}-components_threshold={contact_threshold}"
-            f"_maxiters={max_iter}_{learning_method}_data_prop_{train_data_proportion}_")
-
-    training_path = training_path_pattern + f"{unique_id}"
-    makedirs(training_path, exist_ok=False)
-
-    # Setup the log file path (in the same folder than the training)
-    log_file = path.join(training_path, f"decomposition_{tag}_{unique_id}.log")
-
-    # Setup logging to file and console
-    setup_logging(log_file)
-    logging.info("-" * 50)
-
-    summary = {
-        "data_path": path_to_data,
-        "tag": tag,
-        "file_to_process": file_to_process,
-        # "efficiency_file_to_process": efficiency,
-        "contact_threshold": contact_threshold,
-        "num_components": num_components,
-        "max_iterations": max_iter,
-        "learning_method": learning_method,
-        "num_jobs": num_jobs,
-        "train_data_proportion": train_data_proportion,
-        "log_file": log_file,
-        "training_path": training_path,
-        # "min_barcode_efficiency": min_efficiency,
-        "batch_size": batch_size,
-        "random_seed": random_seed
-    }
-
-    logging.info(f"Settings summary for run: {unique_id}")
-    for key in summary.keys():
-        logging.info(f" {key}: {summary[key]}")
-
-    # setting output folder
-    logging.info(f"[{unique_id}] Will save trainings to: {training_path}")
-
-## Format the data for LDA training (2D to 1D and pwd to contact)
-## ==============================================================
-
-    # Check the data proportion for the training set is valid
-    try:
-        assert 0.01 <= train_data_proportion <= 1
-    except AssertionError:
-        train_data_proportion = 1
-        logging.warning(
-            f"! Proportion of data used for training was invalid - reverting to default value of "
-            f"{train_data_proportion}")
-
-    # processing data based on extension
-    if file_to_process.endswith(".npy"):
-        raw_data = np.load(file_to_process, allow_pickle=True)
-        # raw_data_efficiency = np.load(efficiency, allow_pickle=True)
-        # raw_data = np.moveaxis(raw_data, -1, 0)     # if the npy files have the number of matrices along the last axis instead of the first
-    elif file_to_process.endswith(".h5"):
-        with File(file_to_process, mode="r") as handler:
-            raw_data = handler["pairwise_distances"][:]
-    else:
-        raise ValueError("Unsupported file extension")
-
-    # getting the upper triangle matrix from the first diagonal
-    if raw_data.ndim == 3:  # if the data format is (num_matrices, num_barcodes, num_barcodes)
-        ut_idxs = np.triu_indices_from(raw_data[0], k=1)
-        assert ut_idxs[0].shape == ut_idxs[1].shape
-        data = np.empty((raw_data.shape[0], ut_idxs[0].shape[0]))
-        for i in range(raw_data.shape[0]):
-            data[i] = raw_data[i][ut_idxs]
-    elif raw_data.ndim == 2:  # if the data format is (num_matrices, ((num_barcodes * (num_barcodes - 1)) / 2)
-        data = raw_data.copy()
-    else:
-        raise ValueError("Unsuitable data shape")
-
-    # compute the contact matrix
-    if contact_threshold > 0:
-        data = np.asarray(data <= contact_threshold, dtype=int)
-    elif contact_threshold == -1:
-        data2 = data.copy()
-        for i in range(data2.shape[0]):
-            data[i] = np.max(data2[i]) - data2[i]
-        data[np.isnan(data)] = 0
-    elif contact_threshold == 0:
-        data = 1 / (data ** 0.227)
-        data[np.isnan(data)] = 0
-    else:
-        raise ValueError("Contact threshold not suitable")
-    
-
-
-    # computing mean contact matrix
-    contact_matrix = squareform(
-        np.mean(data.astype(float) if fit_transform_flag else data_train.astype(float), axis=0))
-    np.fill_diagonal(contact_matrix, 1)
-
-    logging.info(f"Plotting mean contact matrix, type/shape: {type(contact_matrix)}/{contact_matrix.shape}")
-    plot_mean_contact_matrix(contact_matrix, data_train, training_path,
-                             f'{tag}_mean_contact_map')
-
-    # save a few examples of contact matrix
-    logging.info(f"Plotting examples of contact matrix")
-    for n in range(5):
-        m = data_train[np.random.randint(data_train.shape[0]), :]
-        m = squareform(m)
-        plot_mean_contact_matrix(m, data_train, training_path,
-                                 f'{tag}_sc_contact_map_{n}')
-
 ## Start training and save the results at the end
 ## ==============================================
 
-    # instantiate the LDA model class
-    logging.info(f"[{unique_id}] Getting training ready")
-    try:
-        if learning_method == "online":
-            model = LatentDirichletAllocation(n_components=num_components,
-                                              max_iter=max_iter,
-                                              n_jobs=num_jobs,
-                                              learning_method=learning_method,
-                                              batch_size=batch_size,
-                                              random_state=random_seed)
-        else:
-            model = LatentDirichletAllocation(n_components=num_components,
-                                              max_iter=max_iter,
-                                              n_jobs=num_jobs,
-                                              learning_method=learning_method,
-                                              random_state=random_seed)
-    except Exception as e:
-        logging.error(f"Error occurred during LDA instantiation: {str(e)}")
 
-    # starting training
-    logging.info(f"[{unique_id}] Start training...")
-    start = perf_counter()
-    try:
-        if fit_transform_flag:
-            decomposition_train = model.fit_transform(data)
-            decomposition_test = []
-        else:
-            model.fit(data_train)
-            decomposition_test = model.transform(data_test)
-            decomposition_train = model.transform(data_train)
-        components = model.components_
-        components_norm = components / np.sum(components, axis=1)[:, np.newaxis]      # for normalised pseudocount
-        elapsed_time = readable_duration(perf_counter() - start)
+# # starting training
 
-        # updating summary dict with results
-        logging.info(f"[{unique_id}] Training finished successfully")
-        results = {
-            "model_num_iterations": model.n_iter_,
-            "model_score": model.score(data),
-            "model_perplexity": model.bound_,
-        }
-        summary.update(results)
+# try:
+#     if fit_transform_flag:
+#         decomposition_train = model.fit_transform(data)
+#         decomposition_test = []
+#     else:
+#         model.fit(data_train)
+#         decomposition_test = model.transform(data_test)
+#         decomposition_train = model.transform(data_train)
+#     components = model.components_
+#     components_norm = components / np.sum(components, axis=1)[:, np.newaxis]      # for normalised pseudocount
+#     time_elapsed = readable_duration(perf_counter() - time_start)
 
-        # save the model, components, weights, and key info
-        joblib.dump(model, path.join(training_path, "model.jl"))
+#     # updating summary dict with results
+#     logging.info(f"[{unique_id}] Training finished successfully")
+#     results = {
+#         "model_num_iterations": model.n_iter_,
+#         "model_score": model.score(data),
+#         "model_perplexity": model.bound_,
+#     }
+#     summary.update(results)
 
-        # compute representativities and sort matrices by the values
-        rep_threshold = 0.1
-        rep = np.mean(decomposition_train >= rep_threshold, axis=0)
-        sort_idxs_descending = np.argsort(rep)[::-1]
-        rep = np.sort(rep)[::-1]
-        matrices = [squareform(components[i]) for i in range(components.shape[0])]
-        matrices = [matrices[i] for i in sort_idxs_descending]
-        plot_components(matrices, decomposition_train, rep, training_path, tag)
-
-        # save components and weights after classification by representativity - save key info
-        np.save(path.join(training_path, "components_sorted.npy"), components[sort_idxs_descending, :])
-        np.save(path.join(training_path, "decomposition_test_sorted.npy"), decomposition_test[:, sort_idxs_descending])
-        np.save(path.join(training_path, "decomposition_train_sorted.npy"), decomposition_train[:, sort_idxs_descending])
-        json.dump(summary, open(path.join(training_path, "summary.json"), mode="w"), indent=4)
-        logging.info(f"[{unique_id}] Saved results in {training_path}")
-
-        # plot the decomposition
-        plot_decomposition(decomposition_train, num_components, training_path)
-
-        # logs elapsed time
-        logging.info(f"[{unique_id}] Completed in {elapsed_time}")
-
-    except Exception as e:
-        logging.error(f"Error occurred during LDA training: {str(e)}")
+# # compute representativities and sort matrices by the values
+# rep_threshold = 0.1
+# rep = np.mean(decomposition_train >= rep_threshold, axis=0)
+# sort_idxs_descending = np.argsort(rep)[::-1]
+# rep = np.sort(rep)[::-1]
+# matrices = [squareform(components[i]) for i in range(components.shape[0])]
+# matrices = [matrices[i] for i in sort_idxs_descending]
+# plot_components(matrices, decomposition_train, rep, training_path, tag)

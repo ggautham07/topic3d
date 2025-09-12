@@ -1,12 +1,23 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-Full object handlers for topic decomposition data and results (:mod:`topic3d.handlers`)
-=====================================================
+Handlers for topic decomposition input data and results (:mod:`topic3d.handlers`)
+============================================================================
 
-.. authors:: jbfiche, ggautham07, marcnol
+This module provides classes and functions for loading, parsing, processing, and analyzing
+spatial genomics data using topic modeling approaches.
 
-Function reference
-------------------
+Classes
+-------
+- RawData : Handles loading and preprocessing of raw trace data from `.csv` (FOF) or `.npy` files.
+- ProcessedData : Lightweight container for storing processed trace data and derived attributes.
+- DecompositionResult : Container for topic decomposition results, with support for evaluation,
+  visualization, and clustering of learned components.
+
+Authors
+-------
+jbfiche, ggautham07, marcnol
+
 """
 
 
@@ -45,13 +56,57 @@ from . import visualization as vzl
 
 class RawData:
     """
-    Data handler for raw data file types: .npy, .csv for Fish Omics Format (FOF) are accepted
+    Handler for raw spatial genomics data in NumPy (.npy) or Fish Omics Format (.csv) files.
+
+    This class supports:
+    - Loading and parsing single-cell spatial trace data.
+    - Interfacing with raw NumPy arrays or structured FOF (Fish Omics Format) CSVs.
+    - Extracting metadata, coordinates, barcode bins, and trace IDs.
+    - Converting raw input into a `ProcessedData` object for downstream analysis.
+    - Computing basic genomic and 3D spatial statistics.
+
+    Attributes
+    ----------
+    library : pd.DataFrame or None
+        Full FOF-formatted data table if a `.csv` file is loaded, otherwise None.
+    traces : CoordsArrayStack or None
+        Parsed coordinate array stack (shape: N_traces × N_barcodes × 3) for XYZ positions.
+    num_traces : int or None
+        Number of traces (typically one per nucleus or region).
+    num_bc : int or None
+        Number of barcodes per trace.
+    bc_ids : np.ndarray or None
+        Indices or identifiers for barcodes.
+    source : list of str or None
+        File path(s) from which data was loaded.
     
-    Create an instance of the object and use the method `load(path_to_file:str)` to load the data
-    
-    Data can be processed to produce a `ProcessedData` object with the `process()` method
-    
-    Note: the highest amount of information can only be captured from a FOF file
+    Methods
+    -------
+    load(path_to_file, metadata=None, extract_items=True)
+        Load raw data from a .csv (FOF) or .npy (NumPy) file.
+    process()
+        Convert raw traces and metadata into a `ProcessedData` object.
+    compute_3d_vs_genomic_dists(max_realistic_3d_dist, experiment, axis="X")
+        Relate 3D distances to genomic distances between barcodes.
+    compute_inter_loci_genomic_dist()
+        Compute genomic distances between consecutive barcode loci.
+    plot_3d_dist_scaling(dist_df, dim, saving_filename, normalized=False)
+        Visualize scaling of 3D distance vs genomic distance across axes.
+
+    Notes
+    -----
+    - For `.npy` input, some metadata (e.g., barcode bins) must be provided via `metadata`.
+    - FOF `.csv` files contain more comprehensive information and are recommended.
+    - Traces are expected to be in 3D (XYZ); other formats may not be supported.
+    - Use `ProcessedData` for downstream computations and visualization.
+
+    Examples
+    --------
+    >>> raw = RawData()
+    >>> raw.load("trace_data.csv")
+    >>> pdata = raw.process()
+    >>> df = raw.compute_3d_vs_genomic_dists(600, experiment=1)
+    >>> raw.plot_3d_dist_scaling(df, dim={"X": 0, "Y": 1, "Z": 2}, saving_filename="scaling.png")
     """
 
     def __init__(self):
@@ -93,7 +148,18 @@ class RawData:
     
 
     def _extract_traces_from_fof(self) -> np.ndarray:
-        """Extract traces from a FOF-CT Dataframe"""
+        """
+        Extract trace data from a loaded FOF-CT table and reformat into a 3D NumPy array.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (num_traces, num_barcodes, 3) containing X, Y, Z coordinates.
+        
+        Examples
+        --------
+        >>> traces = raw_data._extract_traces_from_fof()
+        """
 
         traces = np.empty((self.num_traces, self.num_bc, 3))
         traces[:] = np.nan
@@ -112,22 +178,21 @@ class RawData:
     @staticmethod
     def _merge_numpy_trace_files(*args) -> np.ndarray:
         """
-        Merge multiple Numpy trace files.
-
-        Loads the datasets and stacks them together in a single dataset. The total number of items is the sum of 
-        the number of items of each dataset and the maximum number of barcodes (other coordinates are replaced by 
-        NaNs)
+        Merge multiple NumPy trace arrays into a single array with shape (N, M, 3).
 
         Parameters
-        --------
-        args : str
-            paths to Numpy files
+        ----------
+        *args : str
+            Paths to .npy files. Each must contain a 3D array of shape (n_traces, n_barcodes, 3).
 
         Returns
+        -------
+        np.ndarray
+            A new NumPy array with the merged traces. Empty values are filled with NaNs.
+        
+        Examples
         --------
-        out : np.ndarray
-            merged traces array
-
+        >>> merged = RawData._merge_numpy_trace_files("a.npy", "b.npy", "c.npy")
         """
 
         # Get the datasets
@@ -163,23 +228,32 @@ class RawData:
     # NOTE _merge_numpy_trace_files and marcnol's FOF data handler code to be used for merging
     def load(self, path_to_file:str, metadata:dict = None, extract_items:bool = True) -> None:
         """
-        Open a trace file; can either be a FOF-CT trace core file or a Numpy file.
-        Former will be formatted as a pandas dataframe. Latter directly as CoordsStackArray object
+        Load trace data from a file (CSV for FOF format or NPY for NumPy arrays).
 
         Parameters
-        --------
+        ----------
         path_to_file : str
-            path to the raw data file
-        metadata : dict
-            metadata to support data from Numpy. Ignored for FOF data.
-            Accepted keys are "trace_ids", "bc_ids", "bc_bins". Others will be added soon
-        extract_items : bool
-            if True (which is default), extract traces from FOF data and set traces object
-        
+            Path to the trace file. Must end with `.csv` (FOF-CT) or `.npy` (NumPy).
+        metadata : dict, optional
+            Metadata dictionary required for loading NPY files. Should contain keys like
+            "trace_ids", "bc_ids", and "bc_bins".
+        extract_items : bool, optional
+            If True (default), extract traces directly from FOF table.
+
         Returns
-        --------
+        -------
         None
-            class attributes are set automatically
+            Sets internal attributes such as `traces`, `bc_bins`, `trace_ids`, etc.
+
+        Raises
+        ------
+        Exception
+            If the file extension is not supported.
+        
+        Examples
+        --------
+        >>> raw_data.load("dataset.csv")
+        >>> raw_data.load("dataset.npy", metadata={"bc_ids": np.arange(30)})
         """
 
         assert path.isfile(path_to_file)
@@ -243,7 +317,25 @@ class RawData:
 
 
     def process(self) -> ProcessedData:
-        """Process the trace data and return everything as a Processed data object"""
+        """
+        Process the trace data and return it as a `ProcessedData` object.
+
+        This method extracts metadata and computes:
+        - Barcode detection efficiency,
+        - Pairwise distances for all traces,
+        - Source and trace-level attributes,
+        and packages them into a `ProcessedData` container.
+
+        Returns
+        -------
+        ProcessedData
+            A container object with processed trace data, metadata, and derived features.
+
+        Raises
+        ------
+        AssertionError
+            If `self.traces` is None.
+        """
 
         assert self.traces is not None, "Traces object `ProcessedData.traces` is required for processing"
 
@@ -265,17 +357,45 @@ class RawData:
     
     def compute_3d_vs_genomic_dists(self, max_realistic_3d_dist:Number, experiment:int, axis="X") -> pd.DataFrame:
         """
-        Using the genomic distance between the barcodes, compute the median 3d distance as a function of the genomic
-        distance.
+        Compute the relationship between 3D Euclidean distances and genomic distances between barcodes.
 
-        @param pairwise_dist: (numpy array) pairwise distances for each individual trace
-        @param gen_dist: (numpy array) 1D array indicating the genomic distance between all pairs of barcodes
-        @param gen_dist_bins: (int) list of genomic distance used to build the histogram
-        @param dist_threshold: (float) maximum distance above which the distance are considered unrealistic
-        @param experiment: (int) indicate the number of the experiment that is being processed
-        @param axis: (str) indicate which axis is being processed
-        @return:
-        dist: (pandas dataframe) contains all the data for the histogram
+        For each pair of barcodes, their genomic distance is computed based on their bin positions,
+        and their 3D distance is obtained from the pairwise distance matrix. Unrealistic 3D distances
+        above a given threshold are discarded. Distances are then binned by genomic separation,
+        and the median 3D distance per bin is returned.
+
+        Parameters
+        ----------
+        max_realistic_3d_dist : Number
+            Maximum 3D distance (in nm) considered realistic; larger values are discarded as outliers.
+        experiment : int
+            Identifier for the experiment (used to annotate the output).
+        axis : str, optional
+            Axis label (e.g., "X", "Y", "Z") to annotate the output. Default is "X".
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame containing binned genomic distances and corresponding median 3D distances.
+            Includes log-transformed columns and counts per bin.
+
+            Columns:
+            - 'genomic distance (kbp)'
+            - 'log10 genomic dist (kbp)'
+            - 'median euclidean distance (nm)'
+            - 'log10 median dist (nm)'
+            - 'n_data'
+            - 'experiment'
+            - 'axis'
+
+        Raises
+        ------
+        None
+
+        Notes
+        -----
+        - Genomic distances are computed as the difference of mean bin positions.
+        - Output can be used for plotting dose–response-like curves in chromatin modeling.
         """
 
         pw_dists_3d = self.traces.pwds()
@@ -319,11 +439,32 @@ class RawData:
 
     def compute_inter_loci_genomic_dist(self) -> np.ndarray:
         """
-        Compute the genomic distance separating two consecutive barcodes (from the experiment)
+        Compute the genomic distances between consecutive barcodes in the trace.
 
-        @param lib: (pandas dataframe) coordinates of the barcodes
-        @param n_bins: (int) total number of barcodes of the library
-        @return: locus_dist: (pandas dataframe) contains the genomic distance in kbp
+        This function calculates the difference in mean genomic bin positions between
+        each consecutive pair of barcodes. It assumes that `self.bc_bins` contains the
+        genomic bin ranges (e.g., [start, end]) for each barcode.
+
+        Returns
+        -------
+        np.ndarray
+            1D array of genomic distances (in bin units) between each pair of consecutive barcodes.
+
+        Raises
+        ------
+        AssertionError
+            If `self.bc_bins` is not defined.
+
+        Warns
+        -----
+        UserWarning
+            If barcode bins are not contiguous (`self.bc_bins_contiguity=False`), which may affect interpretation.
+
+        Examples
+        --------
+        >>> distances = handler.compute_inter_loci_genomic_dist()
+        >>> print(distances)
+        array([2000., 1500., 1800., ...])
         """
 
         assert self.bc_bins
@@ -336,14 +477,31 @@ class RawData:
     
 
     @staticmethod
-    def plot_log_normalization_graph(dist_df:pd.DataFrame, dim:dict, saving_filename:str, normalized_data=False):
+    def plot_3d_dist_scaling(dist_df:pd.DataFrame, dim:dict, saving_filename:str, normalized=False):
         """
-        Plot in log-log scale the distance versus the genomic distance for the raw data and after normalization shift.
+        Plot the scaling of 3D distance vs genomic distance in log-log space, for raw or normalized data.
 
-        @param dist_df: (pandas dataframe) contains all the histogram distance data (Euclidean and genomic)
-        @param dim: (dict) dictionary indicating the name of the axis
-        @param saving_filename: (str) path where to save the figure
-        @param normalized_data: (bool) indicate whether the raw or normalized data should be used
+        Parameters
+        ----------
+        dist_df : pd.DataFrame
+            A dataframe containing histogrammed distances with columns including 
+            "log10 genomic dist (kbp)", "log10 median dist (nm)" or "log10 normalized (nm)", 
+            and "experiment".
+        dim : dict
+            Dictionary mapping axis labels (e.g., "X", "Y", "Z") to subplot indices (0, 1, 2).
+        saving_filename : str
+            Path to save the generated figure (including extension).
+        normalized : bool, optional
+            Whether to use normalized 3D distances for plotting (default is False).
+
+        Returns
+        -------
+        None
+            Saves a multi-panel scatterplot of distance scaling to the specified file.
+
+        Examples
+        --------
+        >>> RawData.plot_dist_scaling(dist_df, dim={"X": 0, "Y": 1, "Z": 2}, saving_filename="scaling.png")
         """
         
         import matplotlib.pyplot as plt
@@ -351,17 +509,17 @@ class RawData:
         
         fig, axs = plt.subplots(nrows=3, ncols=1)
         for ax_name, ax in dim.items():
-            if normalized_data:
-                df = dist_df.loc[dist_df["axis"] == ax_name, ['log10 genomic dist (kbp)',
-                                                            'log10 normalized (nm)',
-                                                            'experiment']]
-                sns.scatterplot(data=df, x='log10 genomic dist (kbp)', y='log10 normalized (nm)',
+            if normalized:
+                df = dist_df.loc[dist_df["axis"] == ax_name, ["log10 genomic dist (kbp)",
+                                                              "log10 normalized (nm)",
+                                                              "experiment"]]
+                sns.scatterplot(data=df, x="log10 genomic dist (kbp)", y="log10 normalized (nm)",
                                 hue="experiment", ax=axs[ax])
             else:
-                df = dist_df.loc[dist_df["axis"] == ax_name, ['log10 genomic dist (kbp)',
-                                                            'log10 median dist (nm)',
-                                                            'experiment']]
-                sns.scatterplot(data=df, x='log10 genomic dist (kbp)', y='log10 median dist (nm)',
+                df = dist_df.loc[dist_df["axis"] == ax_name, ["log10 genomic dist (kbp)",
+                                                            "log10 median dist (nm)",
+                                                            "experiment"]]
+                sns.scatterplot(data=df, x="log10 genomic dist (kbp)", y="log10 median dist (nm)",
                                 hue="experiment", ax=axs[ax])
         fig.set_size_inches(8, 10)
         plt.savefig(saving_filename, dpi=300, bbox_inches="tight")
@@ -371,17 +529,28 @@ class RawData:
 
 class ProcessedData:
     """
-    Handler for processed data, both loading and saving
-    
-    Methods for plotting, computations can be performed on CoordsArrayStack and PWDistsArrayStack
-    
-    Metadata includes barcode list, their genomic bins and detection efficiencies
+    Container for processed data including 3D coordinates, pairwise distances, and metadata.
+
+    Attributes
+    ----------
+    traces : CoordsArrayStack or None
+        Stack of trace coordinates (if available).
+    pwds : PWDistArrayStack or None
+        Stack of pairwise distances (if available).
+    metadata : dict or None
+        Metadata dictionary describing the data (e.g., barcode bins, efficiencies).
+
+    Methods
+    -------
+    load(path_to_file: str)
+        Load processed data from an HDF5 file.
+    save(path_to_file: str, replace: bool = True)
+        Save current data and metadata to an HDF5 file.
     """
 
     def __init__(self):
         self.traces = None
         self.pwds = None
-        self.bc_effs = None
         self.metadata = None
 
  
@@ -400,48 +569,140 @@ class ProcessedData:
 
 
     def load(self, path_to_file:str) -> None:
+        """
+        Load processed data (traces and/or pairwise distances) from an HDF5 file.
+
+        Parameters
+        ----------
+        path_to_file : str
+            Path to the HDF5 file to load.
+
+        Returns
+        -------
+        None
+            Sets `traces`, `pwds`, and `metadata` attributes.
+
+        Raises
+        ------
+        AssertionError
+            If the file is not HDF5 or is missing both traces and distances.
+
+        Examples
+        --------
+        >>> pdata = ProcessedData()
+        >>> pdata.load("processed.h5")
+        """
+
         assert path_to_file.endswith(".h5")
         assert path.isfile(path_to_file)
         with h5py.File(path_to_file, mode="r") as handler:
             datasets = {x:y[:] for x, y in handler.items()}
             attributes = {x:y[:] for x, y in handler.attrs.items()}
+        assert ("traces" in datasets.keys()) or ("pwds" in datasets.keys())
         self.traces = datasets.get("traces", None)
         if self.traces is not None:
             self.traces = CoordsArrayStack(self.traces)
         self.pwds = datasets.get("pwds", None)
         if self.pwds is not None:
             self.pwds = PWDistArrayStack(self.pwds)
-        self.bc_effs = datasets.get("bc_effs", None)
         self.metadata = attributes
 
 
     def save(self, path_to_file: str, replace: bool = True) -> None:
+        """
+        Save current traces, pairwise distances, and metadata to an HDF5 file.
+
+        Parameters
+        ----------
+        path_to_file : str
+            Destination file path for the HDF5 file.
+        replace : bool, optional
+            If False, raises an error if the file already exists (default is True).
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        FileExistsError
+            If file exists and `replace` is set to False.
+
+        Examples
+        --------
+        >>> pdata.save("output.h5")
+        """
+
         if path.isfile(path_to_file) and not replace:
             raise FileExistsError("File already exists and replace is set to False")
         attr_labels = [attr for attr in dir(self) if not callable(getattr(self, attr)) and not attr.startswith("__")]
-        print("Saving the following attributes: ", attr_labels)     # TODO change the printing to cleaner format
+        print("Attempting to save the following: ", **attr_labels, end="\n")
         with h5py.File(path_to_file, mode="w") as handler:
             for lbl in attr_labels:
                 attr = getattr(self, lbl)
                 try:
                     print(lbl, type(attr), attr.dtype)
                     handler.create_dataset(name=lbl, data=attr)
-                    print(f"Saved {lbl} successfully")
+                    print(f"Saved {lbl} successfully as a dataset")
                 except AttributeError:
                     pass
                 except TypeError:
                     handler.attrs[lbl] = attr
-                    print(f"Saved {lbl} successfully as attribute")
+                    print(f"Saved {lbl} successfully in metadata")
+                except not (TypeError or AttributeError) as err:
+                    print(f"Unexpected error occurred while saving {lbl}", err)
+                    continue
 
 
 #TODO
 class DecompositionResult:
     """
-    Decomposition results handler, loads and saves results, used to quickly perform further analyses on them
-    
-    Methods for post-processing described to compute representativity, reconstruction, coherence and divergence
-    
-    Embedding and clustering of decomposition
+    Handler for LDA-based decomposition results and downstream analyses.
+
+    This class stores and processes the results of topic modeling (e.g., via Latent Dirichlet Allocation)
+    and provides convenience methods for evaluating component quality, plotting, and clustering.
+
+    Attributes
+    ----------
+    model : LatentDirichletAllocation
+        The trained LDA model from which components were derived.
+    decomposition : np.ndarray
+        The document-topic matrix (samples × topics).
+    components : np.ndarray
+        The topic-word matrix (topics × features).
+    components_norm : np.ndarray
+        Normalized version of the components matrix where each row sums to 1.
+    num_components : int
+        Number of topics (components).
+    num_items : int
+        Number of samples in the dataset.
+    metadata : dict
+        Optional metadata associated with the decomposition (e.g., training/testing indices).
+    data_training : np.ndarray or PWDistArrayStack, optional
+        Training data used to compute coherence scores.
+    data_testing : np.ndarray or PWDistArrayStack, optional
+        Testing data reserved for evaluation.
+
+    Methods
+    -------
+    save(dir_to_save)
+        Save the decomposition model, matrices, and metadata to disk.
+    reconstruction(normalize=False)
+        Reconstruct the original data from the decomposition and components.
+    representativity(threshold=0.2)
+        Compute the fraction of samples where each component is active.
+    sort_components(threshold=None, return_freqs=False)
+        Sort components by representativity across samples.
+    divergence(path_to_save=None)
+        Compute and optionally plot the Jensen-Shannon divergence between components.
+    coherence(method="all", num_top_pixels=None)
+        Compute coherence metrics (NPMI, cosine, uMass) for components.
+    plot_components(normalized=False, ordered=False, ...)
+        Plot component matrices as heatmaps (triangle or square form).
+    plot_decomposition(...)
+        Plot the full decomposition matrix as a heatmap.
+    embed_decomposition(...)
+        Embed the decomposition matrix in 2D using PCA, UMAP, or t-SNE with optional clustering.
     """
 
     def __init__(self, model:LatentDirichletAllocation, decomposition:np.ndarray, **kwargs):
@@ -465,8 +726,25 @@ class DecompositionResult:
 
     def save(self, dir_to_save:str):
         """
-        Save the decomposition results to a joblib file for the model, JSON file for metadata and a 
-        HDF5 file for everything else
+        Save the decomposition results to disk.
+
+        This includes:
+        - components and decomposition matrices in HDF5 format
+        - model in joblib format
+        - metadata as HDF5 attributes
+
+        Parameters
+        ----------
+        dir_to_save : str
+            Path to directory where files will be saved.
+
+        Returns
+        -------
+        None
+
+        Examples
+        --------
+        >>> model.save("results/experiment_01/")
         """
         
         with h5py.File(path.join(dir_to_save, "results.h5"), mode="w") as handler:
@@ -481,7 +759,21 @@ class DecompositionResult:
 
     def reconstruction(self, normalize=False):
         """
-        Reconstruct individual contact vectors using the captured components and the decomposition matrix.
+        Reconstruct contact vectors from the component and decomposition matrices.
+
+        Parameters
+        ----------
+        normalize : bool, optional
+            Whether to normalize each component vector to sum to 1 (default is False).
+
+        Returns
+        -------
+        np.ndarray
+            Reconstructed data matrix of shape (n_samples, n_features).
+
+        Examples
+        --------
+        >>> rec = model.reconstruction(normalize=True)
         """
 
         if normalize:
@@ -495,15 +787,66 @@ class DecompositionResult:
     def _extract_threshold(X):
         return np.quantile(X, 10)
 
-    def representativity(self, threshold=None):
+
+    def representativity(self, threshold: Number = 0.2) -> np.ndarray:
+        """
+        Compute the representativity of each component across the dataset.
+
+        Representativity is the proportion of samples in which each component's 
+        activation exceeds a given threshold.
+
+        Parameters
+        ----------
+        threshold : float, optional
+            Activation threshold to count a component as "present" (default is 0.2).
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (n_components,) with representativity scores between 0 and 1.
+
+        Examples
+        --------
+        >>> model.representativity(threshold=0.3)
+        array([0.85, 0.92, 0.74, ...])
+        """
+        
         if threshold is None:
             threshold = self._extract_threshold(self.decomposition)
+        else:
+            assert isinstance(threshold, Number)
+
         return np.mean(self.decomposition >= threshold, axis=0)
     
        
     @staticmethod
     def _compute_coherence_umass(components, data_used, num_top_pixels=10, randomize_data=False):
         """
+        Compute the uMass coherence score for each component.
+
+        The uMass coherence measures how frequently the top pixels (features) 
+        of a component co-occur in the data.
+
+        Parameters
+        ----------
+        components : np.ndarray
+            Component matrix of shape (n_components, n_features).
+        data_used : np.ndarray
+            Binarized data matrix used to compute co-occurrence frequencies.
+        num_top_pixels : int, optional
+            Number of top pixels to use from each component (default is 10).
+        randomize_data : bool, optional
+            If True, select random pixels instead of top-k (default is False).
+
+        Returns
+        -------
+        np.ndarray
+            uMass coherence scores for each component, shape (n_components,).
+
+        Examples
+        --------
+        >>> _compute_coherence_umass(components, data_used)
+        array([0.31, 0.26, 0.38, ...])
         """
 
         num_components = len(components)
@@ -535,7 +878,32 @@ class DecompositionResult:
 
     @staticmethod
     def _compute_coherence_npmi_cos(components, data_used, num_top_pixels=10, randomize_data=False):
+        """
+        Compute both the NPMI and cosine coherence scores for each component.
 
+        Parameters
+        ----------
+        components : np.ndarray
+            Component matrix of shape (n_components, n_features).
+        data_used : np.ndarray
+            Binarized data matrix for co-occurrence calculation.
+        num_top_pixels : int, optional
+            Number of top pixels per component to use for computing coherence (default is 10).
+        randomize_data : bool, optional
+            If True, use random top pixels instead of sorted ones.
+
+        Returns
+        -------
+        tuple of np.ndarray
+            - NPMI coherence scores, shape (n_components,)
+            - Cosine coherence scores, shape (n_components,)
+
+        Examples
+        --------
+        >>> _compute_coherence_npmi_cos(components, data_used)
+        (array([...]), array([...]))
+        """
+        
         num_components = len(components)
         coherence_npmi = np.zeros((num_components,))
         coherence_cos = np.zeros((num_components,))
@@ -585,21 +953,26 @@ class DecompositionResult:
     # NOTE vectorised version of jb's original code, NEEDS VALIDATION
     def sort_components(self, threshold: Number = None, return_freqs: bool = False):
         """
-        Sort the components captured from a decomposition by its representativity.
+        Sort components by representativity based on a weight threshold.
 
         Parameters
-        --------
-        threshold: float
-            minimum weight threshold above which the component is considered relevant (or representative)
-        return_freqs: bool
-            return the frequencies of each component sorted by representativity
+        ----------
+        threshold : float, optional
+            Minimum weight above which a component is considered present. If None, uses the model's default threshold.
+        return_freqs : bool, optional
+            Whether to return the frequency of each component across all samples.
 
         Returns
+        -------
+        np.ndarray
+            Sorted indices of components (most to least representative).
+        np.ndarray, optional
+            Frequencies of each component if `return_freqs` is True.
+
+        Examples
         --------
-        freqs : numpy.ndarray
-            frequency of finding each component within the data (after sorting)
-        idxs : numpy.ndarray
-            indices used to sort the components by representativity
+        >>> idxs = model.sort_components(threshold=0.3)
+        >>> idxs, freqs = model.sort_components(threshold=0.3, return_freqs=True)
         """
 
         if threshold is None:
@@ -618,6 +991,26 @@ class DecompositionResult:
 
     # TODO returning mean divergence for decomposition, sorting the matrix by least to most distant?
     def divergence(self, path_to_save:str = None):
+        """
+        Compute the pairwise Jensen-Shannon divergence between all components.
+
+        Optionally, plot and save the divergence matrix as a heatmap.
+
+        Parameters
+        ----------
+        path_to_save : str, optional
+            File path to save the plotted heatmap (must end with .svg or .png).
+
+        Returns
+        -------
+        np.ndarray
+            Pairwise divergence matrix as a condensed distance vector or square matrix.
+
+        Examples
+        --------
+        >>> div = model.divergence()
+        >>> model.divergence("divergence_plot.svg")
+        """
 
         pw_divergence = pdist(self.components, metric="jensenshannon")
         
@@ -648,6 +1041,28 @@ class DecompositionResult:
 
 
     def coherence(self, method: str = "all", num_top_pixels : int = None):
+        """
+        Compute coherence metrics (NPMI, cosine, uMass) for topic components.
+
+        Parameters
+        ----------
+        method : str, optional
+            Which coherence metric to compute: "npmi-cos", "umass", or "all" (default).
+        num_top_pixels : int, optional
+            Number of top pixels to use per component. Defaults to 10% of component length.
+
+        Returns
+        -------
+        tuple
+            Coherence scores depending on selected method:
+            - If "npmi-cos": (npmi, cosine)
+            - If "umass": (umass,)
+            - If "all": ((npmi, cosine), umass)
+
+        Examples
+        --------
+        >>> model.coherence(method="npmi-cos")
+        """
 
         assert isinstance(method, str) and method.lower() in ["npmi-cos", "umass", "all"]
         assert self.data_training is not None
@@ -674,6 +1089,31 @@ class DecompositionResult:
     # TODO add common_cbar in plotting
     def plot_components(self, normalized: bool = False, ordered: bool = False, 
                         path_to_save: str = "", form: str = "triangle", cmap: str = "Reds"):
+        """
+        Plot all component matrices as triangular or square heatmaps.
+
+        Parameters
+        ----------
+        normalized : bool, optional
+            Whether to plot normalized component weights (default: False).
+        ordered : bool, optional
+            Whether to sort components by representativity before plotting (default: False).
+        path_to_save : str, optional
+            Path to save the figure. If empty, the figure is not saved.
+        form : str, optional
+            "triangle" or "square" heatmap style.
+        cmap : str, optional
+            Colormap to use for visualization (default: "Reds").
+
+        Returns
+        -------
+        plt.Figure
+            The matplotlib figure object.
+
+        Examples
+        --------
+        >>> model.plot_components(normalized=True, ordered=True, path_to_save="components.svg")
+        """
 
         wflag = self._set_figsave_flag(path_to_save)
 
@@ -699,16 +1139,41 @@ class DecompositionResult:
     
 
     # TODO
-    def plot_decomposition(self, path_to_save: str = "", cmap: str = "Reds"):
-        # fig = plt.figure(figsize=(10, 10))
-        # ax = fig.add_subplot(1, 1, 1)
-        # sns.heatmap(lda_decomposition_ordered, cmap="coolwarm", ax=ax)
+    def plot_decomposition(self, ordered: bool = False, path_to_save: str = "", cmap: str = "Blues"):
+        """
+        Plot the decomposition matrix as a heatmap (samples x components).
+
+        Parameters
+        ----------
+        ordered : bool, optional
+            Whether to sort components before plotting (not currently implemented).
+        path_to_save : str, optional
+            Path to save the figure.
+        cmap : str, optional
+            Colormap for the heatmap (default: "Blues").
+
+        Returns
+        -------
+        plt.Figure
+            The matplotlib figure object.
+
+        Examples
+        --------
+        >>> model.plot_decomposition(path_to_save="decomposition.svg")
+        """
+
+        import seaborn as sns
+
+        fig = plt.figure(figsize=(8, 10), dpi=300)
+        ax = fig.add_subplot(1, 1, 1)
+        sns.heatmap(self.decomposition, cmap=cmap, ax=ax)
         # ax.get_xaxis().set_visible(False)
         # ax.get_xaxis().set_visible(True)
-        # saving_filename = path.join(training_path, f'topic_decomposition.png')
-        # plt.savefig(saving_filename, dpi=150, bbox_inches='tight')
-        # plt.close(fig)
-        return
+
+        if isinstance(path_to_save, str) and len(path_to_save) > 0:
+            plt.savefig(path_to_save, bbox_inches="tight")
+            
+        return fig
 
 
     def embed_decomposition(self,
@@ -717,6 +1182,32 @@ class DecompositionResult:
                             cluster: bool = False,
                             save_models: bool = True,
                             **kwargs):
+        """
+        Embed the decomposition matrix using PCA, UMAP, or t-SNE and optionally cluster the result.
+
+        Parameters
+        ----------
+        dir_to_save : str
+            Directory path to save the embedding plot and models.
+        method : str, optional
+            Embedding method to use: "PCA", "UMAP", or "TSNE" (default: "UMAP").
+        cluster : bool, optional
+            Whether to perform clustering using HDBSCAN on the embedding (default: False).
+        save_models : bool, optional
+            Whether to save the embedding and clustering models (default: True).
+        **kwargs : dict
+            Additional parameters for embedding (e.g., `num_neighbors`, `min_dist`, etc.).
+
+        Returns
+        -------
+        pd.DataFrame
+            Embedded coordinates with optional cluster labels.
+
+        Examples
+        --------
+        >>> df = model.embed_decomposition("results/", method="umap", cluster=True,
+        ...                                num_neighbors=15, min_dist=0.1)
+        """
 
         assert isinstance(dir_to_save, str) and path.isdir(dir_to_save)
         assert isinstance(method, str)
@@ -778,7 +1269,7 @@ class DecompositionResult:
                                                         for i in range(1, num_components_embedding+1)])
 
         # Plotting the results
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(dpi=300)
         fig.set_figwidth(8)
         fig.set_figheight(8)
         sns.scatterplot(data=embedding_df,
@@ -788,7 +1279,7 @@ class DecompositionResult:
                 ax=ax)
         ax.set_title(method)
         fig.tight_layout()
-        fig.savefig(path.join(dir_to_save, f"embedding_decomposition_{method}.png"), dpi=300)
+        fig.savefig(path.join(dir_to_save, f"embedding_decomposition_{method}.png"))
         plt.close(fig)
         
         if cluster:
@@ -846,8 +1337,8 @@ class DecompositionResult:
             centroids = embedding_clusters_df.groupby("cluster")[[f"{method_label}_1", f"{method_label}_2"]].mean()
             for cluster_id, row in centroids.iterrows():
                 plt.text(row[f"{method_label}_1"]+1, row[f"{method_label}_2"]+1, str(cluster_id),
-                        fontsize=10, weight='bold', ha='center', va='center', color='black',
-                        bbox=dict(facecolor='white', alpha=0.6, boxstyle='round,pad=0.3'))
+                        fontsize=10, weight="bold", ha="center", va="center", color="black",
+                        bbox=dict(facecolor="white", alpha=0.6, boxstyle="round,pad=0.3"))
             plt.tight_layout()
             plt.savefig(path.join(dir_to_save, f"embedding_decomposition_{method}_clustered.png"), dpi=300)
             plt.close()

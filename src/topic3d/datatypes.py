@@ -1,10 +1,28 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
 Data types for topic decomposition (:mod:`topic3d.datatypes`)
-=====================================================
+==============================================================
 
-.. authors:: ggautham07, jbfiche, marcnol
+This module defines core data structures for handling spatial data in chromatin 
+tracing experiments and polymer modeling. It includes:
+
+- `CoordsArrayStack`: a subclass of `np.ndarray` for managing stacks of 3D coordinate traces.
+- `PWDistArrayStack`: a subclass of `np.ndarray` for managing stacks of pairwise distance vectors.
+  
+Both classes support filtering, imputation, statistical aggregation, and 
+visualization (via `topic3d.visualization`) of chromatin structure data. These 
+are designed to be flexible and memory-efficient, while offering high-level 
+methods for preprocessing and analyzing conformational data.
+
+Intended for use in the `topic3d` pipeline after trace extraction and before
+or during topic decomposition and modeling.
+
+Authors
+-------
+ggautham07, jbfiche, marcnol
 """
+
 
 
 # =============================================================================
@@ -175,7 +193,7 @@ class CoordsArrayStack(np.ndarray):
         return effs
 
 
-    def filter(self, min_efficiency=60, by="item") -> CoordsArrayStack:
+    def filter(self, min_efficiency=60, by="item", return_idxs_only=True):
         """
         Filter out traces with low barcode detection efficiency.
 
@@ -184,7 +202,7 @@ class CoordsArrayStack(np.ndarray):
         min_efficiency : float
             Minimum percentage of barcodes that must be detected in a trace to keep it.
         by : str, optional
-            Either "barcode" (default) or "item"/"trace".
+            Either "barcode" or "item"/"trace" (default).
 
         Returns
         -------
@@ -200,9 +218,10 @@ class CoordsArrayStack(np.ndarray):
 
         effs = self.efficiency(by=by)
         idxs = np.argwhere(effs >= min_efficiency)
+        if return_idxs_only:
+            return idxs
         out = CoordsArrayStack(np.squeeze(self[:, idxs]) if by=="barcode" else np.squeeze(self[idxs]))
-
-        return out
+        return idxs, out
 
 
     def impute(self, method="naive") -> CoordsArrayStack:
@@ -509,59 +528,6 @@ class PWDistArrayStack(np.ndarray):
         return mean2
 
 
-    # TODO rewrite as method applied to both self and numpy.ndarrays
-    @staticmethod
-    def _normalize_minmax(arr:np.ndarray) -> np.ndarray:
-        """
-        Normalize array values to [0, 1] using min-max normalization.
-
-        Parameters
-        ----------
-        arr : np.ndarray
-            Input array.
-
-        Returns
-        -------
-        np.ndarray
-            Normalized array.
-        """
-
-        arr_min = np.min(arr)
-        arr_rescaled = (arr - arr_min) / (np.max(arr) - arr_min)
-        
-        return arr_rescaled
-
-
-    # TODO rewrite as method applied to both self and numpy.ndarrays
-    @staticmethod
-    def _rescale_minmax(arr:np.ndarray, ref:np.ndarray) -> np.ndarray:
-        """
-        Rescale arr to the range of ref using min-max normalization.
-
-        Parameters
-        ----------
-        arr : np.ndarray
-            Array to rescale.
-        ref : np.ndarray
-            Reference array to match range.
-
-        Returns
-        -------
-        np.ndarray
-            Rescaled array.
-        """
-        
-        assert np.logical_not(np.isnan(arr).all())
-
-        ref = ref[np.logical_not(np.isnan(ref))]
-        new_min = np.min(ref)
-        new_max = np.max(ref)
-
-        arr_rescaled = (PWDistArrayStack._normalize_minmax(arr) * (new_max - new_min)) + new_min
-
-        return arr_rescaled
-
-
     @staticmethod
     def _regz_pw_sq_matrix(matrix:np.ndarray, hack=False) -> np.ndarray:
         """
@@ -676,7 +642,7 @@ class PWDistArrayStack(np.ndarray):
 
 
     # NOTE JB's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
-    def proximity(self, threshold:Number, hardness=1, keep_NaNs=False) -> PWDistArrayStack:
+    def proximity(self, threshold:Number, hardness=1, keep_NaNs=False) -> np.ndarray:
         """
         Convert distances into proximity values using a sigmoid function or hard threshold.
 
@@ -719,7 +685,7 @@ class PWDistArrayStack(np.ndarray):
         return np.nan_to_num(out, nan=0, copy=True)
 
 
-    def filter(self, min_efficiency: Number = 0.6) -> PWDistArrayStack:
+    def filter(self, min_efficiency: Number = 0.6, return_idxs_only=True):
         """
         Remove matrices with insufficient barcode detection.
 
@@ -730,21 +696,92 @@ class PWDistArrayStack(np.ndarray):
 
         Returns
         -------
-        numpy.ndarray
-            Filtered subset of the stack.
+        np.ndarray or PWDistArrayStack
+            Filtered indices or indices and subset of the stack.
         """
 
         proportion_bins_not_missing = np.mean(~np.isnan(self), axis=1)
         idxs = np.argwhere(proportion_bins_not_missing > min_efficiency)
+        
+        if return_idxs_only:
+            return idxs    
         out = PWDistArrayStack(np.squeeze(self[idxs, :]))
+        return idxs, out
 
-        return out
-    
 
     # # TODO for normalization of pairwise distances from JB's code, available in format_FOF_data.py
     # def normalize(self):
     #     return
 
+
+    def split_random(self, proportion: Number = 0.5, return_idxs_only=True):
+        """
+        Split the dataset two items randomly based on a proportion (default 0.5, i.e., 50%)
+
+        Parameters
+        --------
+        proportion : Number
+            split proportion 0 < proportion < 1
+        """
+
+        assert 0 < proportion < 1
+        assert isinstance(return_idxs_only, bool)
+
+        idxs_all = np.arange(self.num_items, dtype=int)
+        idxs_0 = np.random.choice(idxs_all, size=int(proportion * len(idxs_all)), replace=False)
+        idxs_1 = np.delete(idxs_all, idxs_0)
+        if len(idxs_0) == 0 or len(idxs_1) == 0:
+            warnings.warn("Number of indices was zero after the split, consider changing the proportion")
+        idxs_out = (idxs_0, idxs_1)
+        
+        if return_idxs_only:
+            return idxs_out
+        out = (PWDistArrayStack(np.squeeze(self[idxs_0, :])), PWDistArrayStack(np.squeeze(self[idxs_1, :])))
+        return idxs_out, out
+
+
+    def plot_pixel_efficiency(self, path_to_save: str = "", form: str = "triangle"):
+        """
+        Plot the pixel-wise detection efficiency across the pairwise distance matrix stack.
+
+        This function computes the efficiency of detection at each pixel (i.e., matrix position)
+        across all items in the stack, and visualizes the result as a heatmap.
+
+        Parameters
+        ----------
+        path_to_save : str, optional
+            File path to save the figure. If empty (default), the plot is not saved.
+        form : str, optional
+            Type of plot to generate. Must be either "triangle" or "square". Default is "triangle".
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The generated matplotlib figure.
+
+        Examples
+        --------
+        >>> fig = pwd_stack.plot_pixel_efficiency("figs/eff_map.svg", form="square")
+        >>> fig.show()
+        """
+
+        assert isinstance(path_to_save, str)
+        assert form in ["triangle", "square"]
+
+        wflag = self._set_figsave_flag(path_to_save)
+
+        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
+
+        effs = self.efficiency(by="pixel")
+        fig = map_form_fn[form](items=[effs],
+                                cmap="magma",
+                                cbar_label="efficiency")
+
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
+        
 
     def plot_pwds_avg(self, method: str = "mean",
                       path_to_save: str = "",
@@ -914,33 +951,29 @@ class PWDistArrayStack(np.ndarray):
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
         return fig
+    
 
-
-    def plot_pixel_efficiency(self, path_to_save: str = "", form: str = "triangle"):
+    def plot_proximity_random_examples(self, threshold: Number, hardness: Number,
+                                       num_items: int = 9, random_seed: int = None,
+                                       path_to_save: str = "", form: str = "triangle", cmap="Reds"):
         """
-        Plot the pixel-wise detection efficiency across the pairwise distance matrix stack.
-
-        This function computes the efficiency of detection at each pixel (i.e., matrix position)
-        across all items in the stack, and visualizes the result as a heatmap.
+        Plot a set of randomly-picked proximity maps from the dataset.
 
         Parameters
-        ----------
-        path_to_save : str, optional
-            File path to save the figure. If empty (default), the plot is not saved.
-        form : str, optional
-            Type of plot to generate. Must be either "triangle" or "square". Default is "triangle".
+        --------
+        num_items : Number
+            number of items to plot
+        random_seed : int or None
+            random seed for reproducibility
+        path_to_save : str
+            where to save the plot, if unspecified, returns only the Figure
 
         Returns
-        -------
-        matplotlib.figure.Figure
-            The generated matplotlib figure.
-
-        Examples
         --------
-        >>> fig = pwd_stack.plot_pixel_efficiency("figs/eff_map.svg", form="square")
-        >>> fig.show()
+        Figure
         """
 
+        assert isinstance(num_items, int)
         assert isinstance(path_to_save, str)
         assert form in ["triangle", "square"]
 
@@ -948,11 +981,14 @@ class PWDistArrayStack(np.ndarray):
 
         map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
-        effs = self.efficiency(by="pixel")
-        fig = map_form_fn[form](items=[effs],
-                                cmap="magma",
-                                cbar_label="efficiency")
-
+        random_gen = np.random.default_rng(seed=random_seed)
+        idxs = random_gen.integers(self.num_items, size=num_items)
+        
+        fig = map_form_fn[form](items=self.proximity(threshold, hardness)[idxs, ...],
+                                titles=[f"Index  {i:,}" for i in idxs],
+                                cmap=cmap,
+                                cbar_label="proximity")
+        
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
@@ -995,14 +1031,14 @@ class PWDistArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        prop_means = np.empty(len(thresholds))
+        proportion_means = np.empty(len(thresholds))
         for i, thr in enumerate(thresholds):
             stack = self.proximity(threshold=thr, hardness=hardness, keep_NaNs=False)
             if hardness != 1:
                 stack = np.where(stack >= 0.75, 1, 0)
-            prop_means[i] = np.mean(stack)
+            proportion_means[i] = np.mean(stack)
 
-        fig = vzl.plot_line(x=thresholds, y=prop_means,
+        fig = vzl.plot_line(x=thresholds, y=proportion_means,
                             xlabel="Proximity threshold", ylabel="Mean proximity proportion",
                             linestyle="-", linewidth=4,
                             marker="o", markersize=16)

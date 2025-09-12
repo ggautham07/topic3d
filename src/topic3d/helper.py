@@ -15,6 +15,55 @@ from pathlib import Path
 from numbers import Number
 
 
+def normalize_minmax(arr:np.ndarray) -> np.ndarray:
+    """
+    Normalize array values to [0, 1] using min-max normalization.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Input array.
+
+    Returns
+    -------
+    np.ndarray
+        Normalized array.
+    """
+
+    arr_min = np.min(arr)
+    arr_rescaled = (arr - arr_min) / (np.max(arr) - arr_min)
+    
+    return arr_rescaled
+
+
+def rescale_minmax(arr:np.ndarray, ref:np.ndarray) -> np.ndarray:
+    """
+    Rescale arr to the range of ref using min-max normalization.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        Array to rescale.
+    ref : np.ndarray
+        Reference array to match range.
+
+    Returns
+    -------
+    np.ndarray
+        Rescaled array.
+    """
+    
+    assert np.logical_not(np.isnan(arr).all())
+
+    ref = ref[np.logical_not(np.isnan(ref))]
+    new_min = np.min(ref)
+    new_max = np.max(ref)
+
+    arr_rescaled = (normalize_minmax(arr) * (new_max - new_min)) + new_min
+
+    return arr_rescaled
+
+
 def _bins_equilen(start, end, num_bins):
     """Generate bins of lengths that are as close to equal as possible"""
 
