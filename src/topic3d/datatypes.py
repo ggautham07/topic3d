@@ -831,7 +831,7 @@ class PWDistArrayStack(np.ndarray):
     
 
     def plot_pwds_random_examples(self, num_items: int = 9, random_seed: int = None,
-                                  path_to_save: str = "", form: str = "triangle", cmap="Reds_r"):
+                                  path_to_save: str = "", form: str = "triangle", cmap="Reds_r", include_cbar=True):
         """
         Plot a set of randomly-picked PWD maps from the dataset.
 
@@ -863,7 +863,8 @@ class PWDistArrayStack(np.ndarray):
         fig = map_form_fn[form](items=self[idxs, ...],
                                 titles=[f"Index  {i:,}" for i in idxs],
                                 cmap=cmap,
-                                cbar_label="distance")
+                                cbar_label="distance",
+                                include_cbar=include_cbar)
         
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
@@ -955,7 +956,7 @@ class PWDistArrayStack(np.ndarray):
 
     def plot_proximity_random_examples(self, threshold: Number, hardness: Number,
                                        num_items: int = 9, random_seed: int = None,
-                                       path_to_save: str = "", form: str = "triangle", cmap="Reds"):
+                                       path_to_save: str = "", form: str = "triangle", cmap="Reds", include_cbar=True):
         """
         Plot a set of randomly-picked proximity maps from the dataset.
 
@@ -985,9 +986,10 @@ class PWDistArrayStack(np.ndarray):
         idxs = random_gen.integers(self.num_items, size=num_items)
         
         fig = map_form_fn[form](items=self.proximity(threshold, hardness)[idxs, ...],
-                                titles=[f"Index  {i:,}" for i in idxs],
+                                titles=[f"Index  {i:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}" for i in idxs],
                                 cmap=cmap,
-                                cbar_label="proximity")
+                                cbar_label="proximity",
+                                include_cbar=include_cbar)
         
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")

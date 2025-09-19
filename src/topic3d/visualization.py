@@ -17,9 +17,10 @@ import math
 
 import matplotlib.pyplot as plt
 import matplotlib.transforms as transforms
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Polygon
 import matplotlib.patheffects as patheffects
-from matplotlib import rcParams
+from matplotlib import rcParams, colormaps
 import seaborn as sns
 from PIL import Image
 
@@ -308,15 +309,16 @@ def _annotate_labels(ax, tick_dict, loc_dict, lib, fontsize=12, line_sep=0.04):
 
         # Draw the label manually
         if label_color == 'black':
-            ax.text(
-                x=tick, y=-0.01, s=bc,
-                transform=ax.get_xaxis_transform(),
-                rotation=0,
-                ha='center', va='top',
-                fontsize=fontsize,
-                fontweight='bold',
-                color=label_color  # ✅ this sets the correct color
-                )
+            if i % 5 == 0:
+                ax.text(
+                    x=tick, y=-0.01, s=bc,
+                    transform=ax.get_xaxis_transform(),
+                    rotation=0,
+                    ha='center', va='top',
+                    fontsize=fontsize,
+                    fontweight='bold',
+                    color=label_color  # ✅ this sets the correct color
+                    )
         else:
             ax.text(
                 x=tick, y=-0.01, s=bc,
@@ -327,7 +329,7 @@ def _annotate_labels(ax, tick_dict, loc_dict, lib, fontsize=12, line_sep=0.04):
                 fontweight='bold',
                 color=label_color,  # ✅ this sets the correct color
                 path_effects=[patheffects.Stroke(linewidth=1.5, foreground='black'), patheffects.Normal()]
-            )
+                )
 
         # Draw a small tick
         ax.plot([i, i], [0, -0.2], color='black', lw=1, transform=ax.transData, clip_on=False)
@@ -423,8 +425,7 @@ def _add_gene_legend(ax, loci_dict, location='outside', anchor=(1.05, 1), fontsi
     return ax
 
 
-# TODO add gridlines possibility. With automaticallu picked color or supplied using kwargs?
-# BUG saving as png is a problem, plots become blurred due to rotation
+# TODO add gridlines possibility. With automatically picked color or supplied using kwargs?
 def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines: bool = False):
     """Helper that draws a matrix as a rotated lower triangle heatmap on an existing matplotlib Axes object."""
 
@@ -432,7 +433,7 @@ def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines
     mask = np.triu(np.ones_like(matrix, dtype=bool))
     matrix_masked = np.ma.masked_array(matrix, mask=~mask)
 
-    im = ax.imshow(matrix_masked, origin="lower", cmap=cmap, interpolation="auto")
+    im = ax.imshow(matrix_masked, origin="lower", cmap=cmap, interpolation="none")
     # rotate ‑45° so that the matrix diagonal becomes the base of a triangle
     trans = transforms.Affine2D().rotate_deg(-45).scale(1/ math.sqrt(2), -1/ math.sqrt(2)) + ax.transData
     im.set_transform(trans)
@@ -440,8 +441,23 @@ def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines
     coords = np.array([[-0.5, 0], [num_bins, 0], [num_bins / 2, num_bins / math.sqrt(2)]])
     triangle = Polygon(coords, closed=True, transform=ax.transData)
     im.set_clip_path(triangle)
+    # draw triangle border manually
+    coords = np.array([[-0.5, 0], [num_bins-0.5, 0], [(num_bins-1) / 2, num_bins / 2]])
+    border = Polygon(coords, closed=True, edgecolor="#000", facecolor="none", linewidth=0.2,)
+    # coords = np.array([[0, 0.5], [num_bins-1, 0.5], [(num_bins-1) / 2, num_bins / 2]])
+    # Diagonal: left to top
+    # left = coords[0]
+    # top = coords[2]
+    # right = coords[1]
+    # ax.add_line(Line2D([left[0], top[0]], [left[1], top[1]],
+    #                 color="#000", linewidth=0.25, transform=ax.transData))
+
+    # # Diagonal: top to right
+    # ax.add_line(Line2D([top[0], right[0]], [top[1], right[1]],
+    #                 color="#000", linewidth=0.25, transform=ax.transData))
+    ax.add_patch(border)
     # setting axis limits
-    xf = 0.05 * num_bins
+    xf = 0.045 * num_bins
     yf = -0.05 * num_bins
     ax.set_xlim(-xf, num_bins+xf)
     ax.set_ylim(yf, num_bins*0.5)
@@ -452,7 +468,8 @@ def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines
 
 
 # NOTE do not change values of to axis sizes, limits and font sizes, they are optimized to fit nicely
-def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None, cmap="Reds", cbar_label="") -> Figure:
+def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None,
+                           cmap="Reds", include_cbar=True, cbar_label="") -> Figure:
     """
     Plot a grid of matrices in triangular form with a colorbar
     
@@ -489,7 +506,7 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None, cmap="Re
         # Take only upper triangle by masking the lower one
         if itm.ndim == 1:
             mat = squareform(itm)
-            np.fill_diagonal(mat, np.nan)
+            # np.fill_diagonal(mat, np.nan)
         else:
             mat = itm[:]
         num_bc = mat.shape[0]
@@ -498,16 +515,17 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None, cmap="Re
         data_masked = np.where(mask, lower, np.nan)
         
         # Values computed to be used in colorbar
-        min_val = np.nanmin(data_masked)
-        max_val = np.nanmax(data_masked)
-        mid_val = (max_val + min_val) / 2
+        if include_cbar:
+            min_val = np.nanmin(data_masked)
+            max_val = np.nanmax(data_masked)
+            mid_val = (max_val + min_val) / 2
         
         # Drawing the map, creating space for the colorbar and drawing that as well
         im = _draw_2d_tri_map(mat, ax=ax, cmap=cmap)    # using internal routine
         ticks_bc = np.arange(0, num_bc, 5)
         ax.set_xticks(ticks_bc)
         for tk in ticks_bc:
-            ax.text(x=tk, y=0.095, s="|",
+            ax.text(x=tk, y=0.09, s="|",
                     transform=ax.get_xaxis_transform(), rotation=0,
                     ha="center", va="top",
                     fontsize=4, fontweight="bold", color="black")
@@ -515,16 +533,17 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None, cmap="Re
                     transform=ax.get_xaxis_transform(), rotation=0,
                     ha="center", va="top",
                     fontsize=6 if flag_no_grid else 8, fontweight="bold", color="black")
-        # axpos = ax.get_position()
-        # cax = fig.add_axes([axpos.x0+0.01, axpos.y0+0.05, axpos.width, axpos.height * 0.075])
-        cbar = fig.colorbar(mappable=im, ax=ax, pad=0.1 if flag_no_grid else 0.075, shrink=0.5, aspect=15)
-        cbar.set_ticks(ticks=[min_val, mid_val, max_val],
-                       labels=[f"{min_val:.1f}", f"{mid_val:.1f}", f"{max_val:.1f}"],
-                       fontsize=8 if flag_no_grid else 9)
-        cbar.ax.set_ylabel(cbar_label, fontsize=10, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
-        cbar.outline.set_visible(False)
-        cbar.ax.yaxis.set_label_position("right")
-        cbar.ax.yaxis.set_ticks_position("left")
+        if include_cbar:
+            # axpos = ax.get_position()
+            # cax = fig.add_axes([axpos.x0+0.01, axpos.y0+0.05, axpos.width, axpos.height * 0.075])
+            cbar = fig.colorbar(mappable=im, ax=ax, pad=0.1 if flag_no_grid else 0.075, shrink=0.5, aspect=15)
+            cbar.set_ticks(ticks=[min_val, mid_val, max_val],
+                        labels=[f"{min_val:.1f}", f"{mid_val:.1f}", f"{max_val:.1f}"],
+                        fontsize=8 if flag_no_grid else 9)
+            cbar.ax.set_ylabel(cbar_label, fontsize=10, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
+            cbar.outline.set_visible(False)
+            cbar.ax.yaxis.set_label_position("right")
+            cbar.ax.yaxis.set_ticks_position("left")
         
         # Setting the title/text for the map
         ax.text(x=0.04, y=0.2, s=ttl, transform=ax.transAxes, fontsize=6 if flag_no_grid else 9, rotation=45)
@@ -541,7 +560,7 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None, cmap="Re
 def _draw_2d_sq_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines: bool = False):
     """Helper that draws a square matrix on an existing matplotlib Axes object"""
 
-    im = ax.imshow(matrix, origin="lower", cmap=cmap, interpolation="auto")
+    im = ax.imshow(matrix, origin="lower", cmap=cmap, interpolation="none")
     ax.yaxis.set_inverted(True)
     for _, spine in ax.spines.items():
         spine.set_visible(False)
@@ -653,16 +672,19 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
     topic_sq = squareform(topic) if topic.ndim == 1 else topic
 
     or_dict = _odds_ratio_matrix(topic_sq, locus_dict, bright_q)
-    print(or_dict)
+    # print(or_dict)
     enrich  = [(et, OR) for et, (OR, _) in or_dict.items() if OR > 1]
     enrich.sort(key=lambda x: x[1], reverse=True)
-    print(enrich)
+    # print(enrich)
 
     # ------------------------------------------------------------------
     #  Base triangular heat‑map (unchanged from original)
     # ------------------------------------------------------------------
     fig, ax = plt.subplots(figsize=(10, 10))
     im = _draw_2d_tri_map(topic_sq, ax=ax, cmap=cmap)
+    num_bins = len(lib["barcode_id"])
+    yf = -0.01 * num_bins
+    ax.set_ylim(yf, num_bins)
 
     tick_dict = hp.parse_locus_labels(locus_dict, lib)
     ax = _annotate_labels(ax, tick_dict, locus_dict, lib,
@@ -689,7 +711,7 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
     cax = fig.add_axes([axpos.x1 + 0.01, axpos.y0, 0.03, axpos.height / 2])
     cbar = plt.colorbar(im, cax=cax)
     cbar.ax.set_ylabel("Pseudocount", fontsize=font_info["tick_label"])
-    cbar.ax.tick_params(labelsize=font_info["tick_label"] - 2)
+    cbar.ax.tick_params(labelsize=font_info["tick_label"] + 2)
 
     ax.text(0.5, 0.55,
             f"CFM {topic_n} – representativity: {round(topic_repr*100, 1)}%",

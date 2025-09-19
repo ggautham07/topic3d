@@ -636,7 +636,7 @@ class ProcessedData:
         if path.isfile(path_to_file) and not replace:
             raise FileExistsError("File already exists and replace is set to False")
         attr_labels = [attr for attr in dir(self) if not callable(getattr(self, attr)) and not attr.startswith("__")]
-        print("Attempting to save the following: ", **attr_labels, end="\n")
+        print("Attempting to save the following: ", *attr_labels, end="\n")
         with h5py.File(path_to_file, mode="w") as handler:
             for lbl in attr_labels:
                 attr = getattr(self, lbl)
