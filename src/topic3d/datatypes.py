@@ -775,7 +775,7 @@ class PWDistArrayStack(np.ndarray):
         effs = self.efficiency(by="pixel")
         fig = map_form_fn[form](items=[effs],
                                 cmap="magma",
-                                cbar_label="efficiency")
+                                cbar_label="efficiency %")
 
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
@@ -913,7 +913,7 @@ class PWDistArrayStack(np.ndarray):
         prox_stack = self.proximity(threshold=threshold, hardness=hardness, keep_NaNs=keep_NaNs)
         prox_mean = np.nanmean(prox_stack, axis=0)
         fig = map_form_fn[form](items=[prox_mean],
-                                titles=[f"$n = ${self.num_items:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}"],
+                                titles=[f"$n = ${self.num_items:,}  |  $k = ${threshold} nm |  $h = ${hardness:.1f}"],
                                 cmap=cmap,
                                 cbar_label="mean proximity")
 
@@ -943,7 +943,7 @@ class PWDistArrayStack(np.ndarray):
                      for thr, hrd in zip(thresholds, hardnesses)]
         
         fig = map_form_fn[form](items=prox_avgs,
-                                titles=[f"$n = ${self.num_items:,}  |  $k = ${thr} nm  |  $h = ${hrd:.1f}" \
+                                titles=[f"$n = ${self.num_items:,}  |  $k = ${thr}  |  $h = ${hrd:.1f}" \
                                         for thr, hrd in zip(thresholds, hardnesses)],
                                 cmap=cmap,
                                 cbar_label="mean proximity")

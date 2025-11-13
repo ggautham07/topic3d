@@ -538,7 +538,7 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None,
             # cax = fig.add_axes([axpos.x0+0.01, axpos.y0+0.05, axpos.width, axpos.height * 0.075])
             cbar = fig.colorbar(mappable=im, ax=ax, pad=0.1 if flag_no_grid else 0.075, shrink=0.5, aspect=15)
             cbar.set_ticks(ticks=[min_val, mid_val, max_val],
-                        labels=[f"{min_val:.1f}", f"{mid_val:.1f}", f"{max_val:.1f}"],
+                        labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
                         fontsize=8 if flag_no_grid else 9)
             cbar.ax.set_ylabel(cbar_label, fontsize=10, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
             cbar.outline.set_visible(False)
@@ -546,7 +546,12 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None,
             cbar.ax.yaxis.set_ticks_position("left")
         
         # Setting the title/text for the map
-        ax.text(x=0.04, y=0.2, s=ttl, transform=ax.transAxes, fontsize=6 if flag_no_grid else 9, rotation=45)
+        ax.text(x=0.03, y=0.23, s=ttl,
+                transform=ax.transAxes,
+                rotation=45,
+                fontsize=7 if flag_no_grid else 10,
+                # fontweight=600,
+                )
 
         if (flag_no_grid == False) and (len(axs.flat) > len(items)):
             for ax in axs.flat[len(items):]:
