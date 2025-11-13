@@ -220,7 +220,7 @@ def run_decomposition(root_dir,
             f"_maxiters={max_iter}_{learning_method}_data_prop_{train_data_proportion}_")
 
     training_path = training_path_pattern + f"{unique_id}"
-    print(f'$ Training path: {training_path}'
+    print(f">>> training path: {training_path}")
     makedirs(training_path, exist_ok=False)
 
     # Setup the log file path (in the same folder than the training)
