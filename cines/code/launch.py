@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # 
 """
@@ -67,7 +68,6 @@ def parse_arguments():
     
     # Parse arguments
     return parser.parse_args()
-
 
 # Function to run the decompositions in parallel
 def main():

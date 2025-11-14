@@ -550,7 +550,8 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None,
                 transform=ax.transAxes,
                 rotation=45,
                 fontsize=7 if flag_no_grid else 10,
-                fontweight=600,)
+                # fontweight=600,
+                )
 
         if (flag_no_grid == False) and (len(axs.flat) > len(items)):
             for ax in axs.flat[len(items):]:

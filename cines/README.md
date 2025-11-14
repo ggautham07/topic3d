@@ -89,9 +89,16 @@ conda activate chromtopic-test
 #export OMP_NUM_THREADS=192  # or whatever --cpus-per-task you choose
 #export MKL_NUM_THREADS=192
 
-srun --ntasks-per-node=1 --cpus-per-task=192 --threads-per-core=1  /work/CT3/c1916693/SHARED/temp/launch.py --root_dir /work/CT3/c1916693/SHARED --tag$
-
-
+srun --ntasks-per-node=1 --cpus-per-task=192 --threads-per-core=1 \
+    /lus/home/CT3/c1916693/mnollmann/Repositories/topic3d/cines/code/launch.py \
+    --root_dir /work/CT3/c1916693/SHARED \
+    --tag takei2021SinglecellNuclearArchitecture_Mm-brain-chr17_wt \
+    --num_components 15 \
+    --num_jobs 1 \
+    --threshold 150 \
+    --hardness 1 \
+    --learning_method batch \
+    --max_iter 500
 
 ```
 
