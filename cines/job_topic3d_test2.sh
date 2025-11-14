@@ -6,14 +6,14 @@
 #SBATCH --exclusive
 #SBATCH --time=00:20:00
 
-source /opt/cray/pe/cpe/24.07/restore_lmod_system_defaults.sh
+#source /opt/cray/pe/cpe/24.07/restore_lmod_system_defaults.sh
 module purge
 
 # activate environments
-module load cpe/24.07
-module load craype-x86-genoa
-module load PrgEnv-cray
-module load python conda
+#module load cpe/24.07
+#module load craype-x86-genoa
+#module load PrgEnv-cray
+module load python  conda 
 conda activate chromtopic-test
 
 #export MPICH_GPU_SUPPORT_ENABLED=1
@@ -30,7 +30,7 @@ srun --ntasks-per-node=1 --cpus-per-task=192 --threads-per-core=1 \
     --root_dir $data \
     --tag takei2021SinglecellNuclearArchitecture_Mm-brain-chr17_wt \
     --num_components 15 \
-    --num_jobs 5 \
+    --num_jobs 1 \
     --threshold 150 \
     --hardness 1 \
     --learning_method batch \
