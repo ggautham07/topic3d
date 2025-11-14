@@ -122,6 +122,7 @@ def main():
         result = future.result()  # This will block until each computation is done
         print(result)
 
+    print(f"> Finished collecting results from all workers!")
     client.close()
 
     end_time = time.time()
