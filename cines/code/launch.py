@@ -23,6 +23,7 @@ from dask.distributed import Client, LocalCluster
 from perform_decomposition import run_decomposition
 from concurrent.futures import ProcessPoolExecutor
 import uuid
+import time
 
 # test this later to see if performance improves!
 from dask import config
@@ -74,6 +75,9 @@ def main():
 
     args = parse_arguments()
 
+
+    start_time = time.time()
+
     data_dir = os.path.join(args.root_dir, "data")
 
     # Ensure the data folder exists
@@ -120,6 +124,9 @@ def main():
 
     client.close()
 
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Total elapsed time: {elapsed_time:.2f} seconds")
 
 if __name__ == "__main__":
     main()
