@@ -208,19 +208,27 @@ def run_decomposition(root_dir,
 ## Define the training folder and the log
 ## ======================================
 
+
     # Setup the output file path
     unique_id = str(unique_id)[:6]
+    root_dir = root_dir.rstrip('/')
     if learning_method == "online":
         training_path_pattern = root_dir + (
-            f"training/{tag}/{num_components:02d}-components_threshold={contact_threshold}_hardness={hardness}"
+            f"/training/{tag}/{num_components:02d}-components_threshold={contact_threshold}_hardness={hardness}"
             f"_maxiters={max_iter}_{learning_method}_data_prop_{train_data_proportion}_batch_{batch_size}_")
     else:
         training_path_pattern = root_dir + (
-            f"training/{tag}/{num_components:02d}-components_threshold={contact_threshold}_hardness={hardness}"
+            f"/training/{tag}/{num_components:02d}-components_threshold={contact_threshold}_hardness={hardness}"
             f"_maxiters={max_iter}_{learning_method}_data_prop_{train_data_proportion}_")
 
-    training_path = training_path_pattern + f"{unique_id}"
-    print(f">>> training path: {training_path}")
+
+    training_path_pattern = training_path_pattern.rstrip('/')
+    training_path = training_path_pattern + f"/{unique_id}"
+    #training_path = path.join(training_path_pattern, unique_id)
+
+    #makedirs(training_path, exist_ok=True)
+
+    print(f">>> training path: {training_path_pattern}\n{unique_id}\n{training_path}")
     makedirs(training_path, exist_ok=False)
 
     # Setup the log file path (in the same folder than the training)

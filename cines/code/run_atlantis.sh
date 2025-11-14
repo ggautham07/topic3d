@@ -31,3 +31,5 @@ $cmd \
     --hardness 1 \
     --learning_method batch \
     --max_iter 500
+
+#--num_components 10,15,20,25 --num_jobs 5 --threshold 150 --hardness 1 --learning_method batch --max_iter 500

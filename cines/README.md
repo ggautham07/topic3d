@@ -82,6 +82,9 @@ This is the command to run in a normal computer
 module purge
 
 # activate environments
+module load cpe/24.07
+module load craype-x86-genoa
+module load PrgEnv-cray
 module load python conda
 conda activate chromtopic-test
 
@@ -89,12 +92,17 @@ conda activate chromtopic-test
 #export OMP_NUM_THREADS=192  # or whatever --cpus-per-task you choose
 #export MKL_NUM_THREADS=192
 
+cmd="/lus/home/CT3/c1916693/mnollmann/Repositories/topic3d/cines/code/launch.py"
+data="/scratch/CT3/c1916693/mnollmann/topics"
+
+echo 'Will run '$cmd' at '$data
+
 srun --ntasks-per-node=1 --cpus-per-task=192 --threads-per-core=1 \
-    /lus/home/CT3/c1916693/mnollmann/Repositories/topic3d/cines/code/launch.py \
-    --root_dir /work/CT3/c1916693/SHARED \
+    $cmd \
+    --root_dir $data \
     --tag takei2021SinglecellNuclearArchitecture_Mm-brain-chr17_wt \
     --num_components 15 \
-    --num_jobs 1 \
+    --num_jobs 5 \
     --threshold 150 \
     --hardness 1 \
     --learning_method batch \
