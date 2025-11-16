@@ -87,6 +87,7 @@ def main():
 
     file_to_process = os.path.join(data_dir, f"{args.tag}.h5")
 
+    """
     # Start a Dask local cluster
     n_jobs = args.num_jobs * len(args.num_components)
     # cluster = LocalCluster(n_workers=n_jobs, threads_per_worker=1)
@@ -128,6 +129,44 @@ def main():
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"Total elapsed time: {elapsed_time:.2f} seconds")
+    """
+    n_jobs = args.num_jobs * len(args.num_components)
+
+    with LocalCluster(n_workers=n_jobs, threads_per_worker=1, processes=True) as cluster:
+        with Client(cluster) as client:
+            print(f"Actual number of workers: {len(client.scheduler_info()['workers'])}")
+
+            futures = []
+            n_components = [item for item in args.num_components for _ in range(args.num_jobs)]
+            for index in range(n_jobs):
+                unique_id = uuid.uuid4()
+                print(f" Spinning job {index} for {n_components[index]} components")
+                future = client.submit(
+                    run_decomposition,
+                    args.root_dir,
+                    args.tag,
+                    file_to_process,
+                    n_components[index],
+                    args.threshold,
+                    args.hardness,
+                    args.max_iter,
+                    args.learning_method,
+                    args.batch_size,
+                    1,
+                    args.train_data_proportion,
+                    unique_id,
+                )
+                futures.append(future)
+
+            # This will either return or raise; it won't silently hang
+            results = client.gather(futures)
+            for r in results:
+                print(r)
+
+            print("> Finished collecting results from all workers!")
+
+    end_time = time.time()
+    print(f"Total elapsed time: {end_time - start_time:.2f} seconds")
 
 if __name__ == "__main__":
     main()
