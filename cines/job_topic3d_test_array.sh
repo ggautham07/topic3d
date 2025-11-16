@@ -14,6 +14,8 @@ module load python conda
 conda activate chromtopic-test
 
 export MPLBACKEND=agg
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
 
 cmd="/lus/home/CT3/c1916693/mnollmann/Repositories/topic3d/cines/code/launch.py"
 data="/scratch/CT3/c1916693/mnollmann/topics"
@@ -23,10 +25,10 @@ echo "Running on host: $(hostname)"
 echo "Data folder: ${data}"
 
 # Build list of files matching takei2021*
-files=( "${data}"/takei2021* )
+files=( "${data}"/data/takei2021Single* )
 
 n_files=${#files[@]}
-echo "Found ${n_files} files matching ${data}/takei2021*"
+echo "Found ${n_files} files matching ${data}/data/takei2021Single*"
 
 # Safety check: ignore tasks beyond number of files
 if (( SLURM_ARRAY_TASK_ID >= n_files )); then
