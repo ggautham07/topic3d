@@ -17,8 +17,9 @@ import joblib
 from topic3d.datatypes import CoordsArrayStack, PWDistArrayStack
 from topic3d.handlers import ProcessedData
 from classes import DecompositionResult
-# import matplotlib
-# matplotlib.use('Agg')  # Use a non-interactive backend
+
+import matplotlib
+matplotlib.use('Agg')  # Use a non-interactive backend
 
 """
 

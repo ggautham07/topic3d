@@ -20,6 +20,8 @@ conda activate chromtopic-test
 #export OMP_NUM_THREADS=192  # or whatever --cpus-per-task you choose
 #export MKL_NUM_THREADS=192
 
+export MPLBACKEND=agg
+
 cmd="/lus/home/CT3/c1916693/mnollmann/Repositories/topic3d/cines/code/launch.py"
 data="/scratch/CT3/c1916693/mnollmann/topics"
 
