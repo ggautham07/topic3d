@@ -28,8 +28,8 @@ import time
 # test this later to see if performance improves!
 from dask import config
 
-config.set({'distributed.worker.daemon': False})
-
+#config.set({'distributed.worker.daemon': False})
+config.set({'distributed.worker.daemon': True}) # need to test this in cines!
 
 # Helper function to parse a single integer or a list of integers
 def parse_num_components(value):
