@@ -33,8 +33,8 @@ echo "Data file found: $expected_file"
 $cmd \
     --root_dir $data \
     --tag $tag \
-    --num_components 5 \
-    --num_jobs 1 \
+    --num_components 30 \
+    --num_jobs 20 \
     --threshold 150 \
     --hardness 1 \
     --learning_method batch \
