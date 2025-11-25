@@ -788,7 +788,7 @@ class DecompositionResult:
         return np.quantile(X, 10)
 
 
-    def representativity(self, threshold: Number = 0.2) -> np.ndarray:
+    def representativity(self, threshold: Number = 0.333) -> np.ndarray:
         """
         Compute the representativity of each component across the dataset.
 
@@ -980,9 +980,9 @@ class DecompositionResult:
         else:
             assert isinstance(threshold, Number)
         
-        representativity = np.sum(self.decomposition > threshold, axis=0)
-        idxs = np.argsort(representativity)[::-1]
-        freqs = representativity / self.num_items
+        repr = self.representativity(threshold)
+        idxs = np.argsort(repr)[::-1]
+        freqs = repr / self.num_items
 
         if return_freqs:
             return idxs, freqs
@@ -1087,7 +1087,7 @@ class DecompositionResult:
 
 
     # TODO add common_cbar in plotting
-    def plot_components(self, normalized: bool = False, ordered: bool = False, 
+    def plot_components(self, normalized: bool = True, ordered: bool = False, 
                         path_to_save: str = "", form: str = "triangle", cmap: str = "Reds"):
         """
         Plot all component matrices as triangular or square heatmaps.
@@ -1119,15 +1119,13 @@ class DecompositionResult:
 
         map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
-        reps = np.mean(self.decomposition > 0.3, axis=0)
-
         if ordered:
-            idxs = self.sort_components(threshold=0.3)
+            idxs = self.sort_components(threshold=0.333)
             items_to_plot = self.components_norm[idxs,:] if normalized else self.components[idxs,:]
         else:
             items_to_plot = self.components_norm if normalized else self.components
 
-        titles = [f"T{i}  |  $\\rho = ${r}" for i, r in enumerate(reps)]
+        titles = [f"T{i}  |  $\\rho = ${r}" for i, r in enumerate(repr)]
         fig = map_form_fn[form](items=items_to_plot,
                                 titles=titles,
                                 cmap=cmap, cbar_label="norm. pseudocount" if normalized else "pseudocount")
@@ -1139,7 +1137,8 @@ class DecompositionResult:
     
 
     # TODO
-    def plot_decomposition(self, ordered: bool = False, path_to_save: str = "", cmap: str = "Blues"):
+    def plot_decomposition(self, ordered: bool = True,
+                           path_to_save: str = "", cmap: str = "Blues"):
         """
         Plot the decomposition matrix as a heatmap (samples x components).
 
@@ -1166,7 +1165,11 @@ class DecompositionResult:
 
         fig = plt.figure(figsize=(8, 10), dpi=300)
         ax = fig.add_subplot(1, 1, 1)
-        sns.heatmap(self.decomposition, cmap=cmap, ax=ax)
+
+        repr = self.representativity(threshold=0.333)
+        idxs = np.argsort(repr)[::-1]
+
+        sns.heatmap(self.decomposition[idxs,:] if ordered else self.decomposition, cmap=cmap, ax=ax)
         # ax.get_xaxis().set_visible(False)
         # ax.get_xaxis().set_visible(True)
 

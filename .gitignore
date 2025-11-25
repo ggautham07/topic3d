@@ -1,5 +1,7 @@
 .vscode/
+build/
 src/topic3d.egg-info/
 src/topic3d/__pycache__/
+tests/mntests.py
 tests/out/
 data/

@@ -45,15 +45,140 @@ def readable_duration(duration:Number):
 ##################################################################################################################
 
 
-def initialize(tag: str, dir_data: str, dir_base: str, params: dict):
+def load_data(path_, tag: str = "") -> (np.ndarray | ProcessedData | dict):
+    """
+    Load a dataset from a Numpy or HDF5 file to yield an array, dictionary or ProcessedData object
+
+    If directory is given, a tag must be provided. Else file path is sufficient
+    """
+
+    assert isinstance(path_, str)
+    if path.isdir(path_):
+        assert isinstance(tag, str)
+        fp = glob(path.join(path_, tag+".npy")) + glob(path.join(path_, tag+".h5"))
+        if len(fp) == 0:
+            logging.error(f"No Numpy or HDF5 file(s) found in `{path_}` with tag `{tag}`")
+            raise FileNotFoundError
+        elif len(fp) > 1:
+            warnings.warn("Both file formats found, loading the HDF5 file")
+            fp = glob(path.join(path_, tag+".h5"))[0]
+        else:
+            fp = fp[0]       
+    elif path.isfile(path_):
+        fp = path_
+        assert fp.endswith((".npy", ".h5"))
+    else:
+        logging.error(f"{path_} is not a file and does not exist")
+        raise FileNotFoundError
+    
+    if fp.endswith(".npy"):
+        return np.load(fp, allow_pickle=True)
+    
+    try:
+        dataobj = ProcessedData()
+        dataobj.load(fp)
+    except AssertionError or KeyError:
+        with h5py.File(fp, mode="r") as handler:
+            dataobj = {x:y[:] for x, y in handler.items()}
+            dataobj.update({x:y[:] for x, y in handler.attrs.items()})
+
+    return dataobj
+
+
+def prep_data(data: ProcessedData | dict, params: dict, dir_to_save: str = "", **kwargs):
+    """
+    Process the PWD data supplied to filter by efficiency of barcode detection and generate proximity vectors.
+
+    Then pick data proportion
+    """
+
+    def _get_val(X, key, flag):
+        return X[key][:] if flag else X.key[:]
+
+    assert isinstance(dir_to_save, str)
+    assert isinstance(params, dict)
+    assert isinstance(data, (ProcessedData, dict))
+    uid = kwargs.get(uid, "no-id")
+    
+    is_dict = True if isinstance(data, dict) else False
+    pwds = _get_val(data, "pwds", is_dict)  # get PWDs whether ProcessedData object or dict is supplied
+    assert isinstance(pwds, np.ndarray)
+    if not isinstance(pwds, PWDistArrayStack):
+        pwds = PWDistArrayStack(pwds)
+
+    min_efficiency = params.get("min_efficiency")
+    if min_efficiency is not None:
+        try:
+            traces = _get_val(data, "traces", is_dict)
+        except KeyError or AttributeError:
+            logging.error("Traces array not found in supplied data object to filter by minimum efficiency")
+            raise
+        assert isinstance(traces, np.ndarray)
+        if not isinstance(traces, CoordsArrayStack):
+            traces = CoordsArrayStack(traces)
+        idxs = traces.filter(min_efficiency=min_efficiency, by="item", return_idxs_only=True)
+
+    pwds_filt = PWDistArrayStack(pwds[idxs,:][:])
+    proximity = pwds_filt.proximity(threshold=params["proximity_threshold"], hardness=params["proximity_hardness"])
+    proximity_avg = np.nanmean(proximity, axis=0)    
+    
+    if len(dir_to_save) > 0 and path.isdir(dir_to_save):
+        logging.info(f"Plotting mean proximity matrix, type/shape: {type(proximity_avg)}/{proximity_avg.shape}")
+        pwds_filt.plot_proximity_avg(threshold=params["proximity_threshold"],
+                                     hardness=params["proximity_hardness"],
+                                     keep_NaNs=False,
+                                     path_to_save=path.join(dir_to_save, "proximity_avg.svg"))
+        logging.info(f"Plotting randomly-picked examples of proximity matrices")
+        pwds_filt.plot_proximity_random_examples(threshold=params["proximity_threshold"],
+                                                 hardness=params["proximity_hardness"],
+                                                 num_items=16,
+                                                 path_to_save=path.join(dir_to_save, "proximity_random_examples.svg"))
+
+    return proximity
+
+
+def split_data(data:np.ndarray, train_data_proportion: Number = 1, **kwargs):
+    """
+    Assign train and test data randomly based on train data proportion
+    """
+
+    uid = kwargs.get(uid, "no-id")
+
+    assert isinstance(data, np.ndarray), "Data must be an array"
+    assert isinstance(train_data_proportion, Number) and 0 < train_data_proportion <= 1
+    if 0 < train_data_proportion <= 0.2:
+        warnings.warn(f"Train data proportion {train_data_proportion} might be too low")
+
+    if train_data_proportion < 1:
+        data_idxs = np.arange(data.shape[0], dtype=int)
+        idxs_train = np.random.choice(data_idxs, size=int(train_data_proportion * len(data_idxs)), replace=False)
+        idxs_test = np.delete(data_idxs, idxs_train)
+        assert np.array_equal(data_idxs, np.sort(np.concatenate((idxs_train, idxs_test))))
+        flag_fit_trans = False  # True if fit_transform is to be applied by LDA
+    else:
+        flag_fit_trans = True
+
+    if flag_fit_trans:
+        data_train = data[:][np.random.choice(np.arange(data.shape[0]), size=data.shape[0], replace=False)] # data[:]
+        logging.info(f"[{uid}] Training + testing data shape: {data_train.shape}")
+        return data_train
+
+    if not flag_fit_trans:
+        data_train = data[idxs_train]
+        data_test = data[idxs_test]
+        logging.info(f"[{uid}] Training data shape: {data_train.shape}, testing data shape: {data_test.shape}")
+        return data_train, data_test
+
+
+def initialize(tag: str, params: dict, dir_base: str, dir_data: str):
     """
     Initialize the directory to train data and save results
     """
 
     uid = str(uuid4())[:6]
 
-    dir_pattern = f"{params["num_components"]:02d}-components_threshold={params["threshold"]}"
-    dir_training = path.join(dir_base, tag, dir_pattern + f"{uid}")
+    dir_pattern = f"{params["num_components"]:02d}-components_threshold={params["proximity_threshold"]}"
+    dir_training = path.join(dir_base, tag, dir_pattern, f"{uid}")
     makedirs(dir_training, exist_ok=False)
 
     # Setup the log file path (in the same folder as the training)
@@ -78,135 +203,31 @@ def initialize(tag: str, dir_data: str, dir_base: str, params: dict):
     return summary
 
 
-def load_data(path_, tag: str) -> (np.ndarray | ProcessedData | dict):
+def decompose(params: dict,
+              data_train: np.ndarray, data_test: np.ndarray = None,
+              dir_to_save: str = "",
+              **kwargs):
     """
-    Load PWD dataset (with other datasets in case of HDF5) from a file.
-    """
-
-    assert isinstance(path_, str)
-    if path.isdir(path_):
-        assert isinstance(tag, str)
-        fp = glob(path.join(path_, tag+"*.npy")) + glob(path.join(path_, tag+"*.h5"))
-        if len(fp) == 0:
-            warnings.warn(f"No Numpy or HDF5 file(s) found in {path_} with {tag}")
-            raise FileNotFoundError
-        elif len(fp) > 1:
-            warnings.warn(f"Multiple files found, loading {fp[0]}")       
-    elif path.isfile(path_):
-        fp = path_
-    else:
-        warnings.warn(f"{path_} is not a file and does not exist")
-        raise FileNotFoundError
+    Run topic decomposition on data with the parameters given.
     
-    if fp.endswith(".npy"):
-        return np.load(fp, allow_pickle=True)
+    Saves results to dir_to_save while actively logging if it was initialized.
+    """
     
-    try:
-        dataobj = ProcessedData()
-        dataobj.load(fp)
-    except AssertionError or KeyError:
-        with h5py.File(fp, mode="r") as handler:
-            dataobj = {x:y[:] for x, y in handler.items()}
-            dataobj.update({x:y[:] for x, y in handler.attrs.items()})
-
-    return dataobj
-
-
-def prep_data(data: ProcessedData | dict, params: dict, dir_to_save: str = ""):
-    """
-    Process the PWD data supplied to filter by efficiency of barcode detection and generate proximity vectors.
-
-    Then pick data proportion
-    """
-
-    def _get_val(X, k, f):
-        return X[k][:] if f else X.k[:]
-
-    assert isinstance(dir_to_save, str)
     assert isinstance(params, dict)
-    assert isinstance(data, (ProcessedData, dict))
-    
-    is_dict = True if isinstance(data, dict) else False
-    pwds = _get_val(data, "pwds", is_dict)
-    assert isinstance(pwds, np.ndarray)
-    if not isinstance(pwds, PWDistArrayStack):
-        pwds = PWDistArrayStack(pwds)
-
-    min_efficiency = params.get("min_efficiency")
-    if min_efficiency is not None:
-        traces = _get_val(data, "traces", is_dict)
-        assert isinstance(traces, np.ndarray)
-        traces = CoordsArrayStack(traces)
-        _, idxs = traces.filter(min_efficiency=min_efficiency, by="item", return_idxs=True)
-
-    pwds_filt = PWDistArrayStack(pwds[idxs,:][:])
-    proximity = pwds_filt.proximity(threshold=params["threshold"], hardness=params["hardness"])
-    proximity_avg = np.nanmean(proximity, axis=0)    
-    
-    if len(dir_to_save) > 0 and path.isdir(dir_to_save):
-        logging.info(f"Plotting mean proximity matrix, type/shape: {type(proximity_avg)}/{proximity_avg.shape}")
-        pwds_filt.plot_proximity_avg(threshold=params["threshold"], hardness=params["hardness"], keep_NaNs=False,
-                                     path_to_save=path.join(dir_to_save, "proximity_avg.svg"))
-        logging.info(f"Plotting randomly-picked examples of proximity matrices")
-        pwds_filt.plot_proximity_random_examples(threshold=params["threshold"], hardness=params["hardness"],
-                                                 num_items=16,
-                                                 path_to_save=path.join(dir_to_save, "proximity_random_examples.svg"))
-
-    return proximity
-
-
-def split_data(data:np.ndarray, train_data_proportion: Number = 1, **kwargs):
-    """
-    Assign train and test data randomly based on train data proportion
-    """
-
-    uid = kwargs(uid, "NO-ID")
-
-    assert isinstance(data, np.ndarray)
-    assert isinstance(train_data_proportion, Number) and 0 < train_data_proportion <= 1
-    if 0 < train_data_proportion <= 0.2:
-        warnings.warn(f"Train data proportion {train_data_proportion} might be too low")
-
-    if train_data_proportion < 1:
-        data_idxs = np.arange(data.shape[0], dtype=int)
-        train_idxs = np.random.choice(data_idxs, size=int(train_data_proportion * len(data_idxs)), replace=False)
-        test_idxs = np.delete(data_idxs, train_idxs)
-        assert np.array_equal(data_idxs, np.sort(np.concatenate((train_idxs, test_idxs))))
+    assert isinstance(data_train, np.ndarray) and data_train.ndim == 2
+    flag_fit_trans = True
+    if data_test is not None:
         flag_fit_trans = False
-    else:
-        flag_fit_trans = True
-
-    if flag_fit_trans:
-        data_train = data[:][np.random.choice(np.arange(data.shape[0]), size=data.shape[0], replace=False)] # data[:]
-        print(np.sum(data_train[0]))
-        logging.info(f"[{uid}] Training and testing data shape: {data_train.shape}")
-        return data_train
-
-    if not flag_fit_trans:
-        data_train = data[train_idxs]
-        data_test = data[test_idxs]
-        logging.info(f"[{uid}] Training data shape: {data_train.shape}, Testing data shape: {data_test.shape}")
-        return data_train, data_test
-
-
-# TODO include training and testing data indices so that the data is split using split_data()
-def decompose(data: np.ndarray, params: dict, dir_to_save: str = "", **kwargs):
-    """
-    Run topic decomposition on data with parameters given.
-    Saves results to path_to_save while actively logging.
-    """
-    
-    assert isinstance(data, np.ndarray) and data.ndim == 2
-    d = int(np.ceil(np.sqrt(data.shape[-1] * 2)))
-    assert d * (d-1) == data.shape[-1] * 2  # ensure that vector can be squareformed
-    assert isinstance(params, dict)
+        assert isinstance(data_test, np.ndarray) and data_test.ndim == 2
+    dim = int(np.ceil(np.sqrt(data_train.shape[-1] * 2)))
+    assert dim * (dim-1) == data_train.shape[-1] * 2  # ensure that vector can be squareformed
     assert isinstance(dir_to_save, str)
     wflag = False
     if len(dir_to_save) > 0:
         assert path.isdir(dir_to_save)  # directory must be created in initialization of unique ID
         wflag = True
 
-    uid = kwargs.get("uid", "NO-ID")
+    uid = kwargs.get("uid", "no-id")
 
     # instantiate the LDA model
     logging.info(f"[{uid}] Getting training ready in {dir_to_save}")
@@ -225,22 +246,33 @@ def decompose(data: np.ndarray, params: dict, dir_to_save: str = "", **kwargs):
     try:
         logging.info(f"[{uid}] Starting training...")
         time_start = perf_counter()
-        decomposition = model.fit_transform(data)
+        if flag_fit_trans:
+            decomposition = model.fit_transform(data_train)
+        else:
+            model = model.fit(data_train)
+            decomposition = model.transform(data_test)
         logging.info(f"[{uid}] Training finished successfully")
     except Exception as err:
-        logging.error(f"Error occurred during LDA training: {str(err)}")
+        logging.error(f"Error occurred during training: {str(err)}")
 
     try:
         results = DecompositionResult(model=model,
                                       decomposition=decomposition,
-                                      data_training=np.arange(data.shape[0]),
+                                      data_training=np.arange(data_train.shape[0]),
                                       params=params)
+        summary = kwargs.get(summary, params)
+        summary.update({"model_num_iterations": model.n_iter_,
+                        "model_score": model.score(data_train if flag_fit_trans else data_test),
+                        "model_perplexity": model.bound_,
+                        })
         if wflag:
             results.save(dir_to_save=dir_to_save)
             results.plot_components(ordered=False, path_to_save=path.join(dir_to_save, "components.svg"))
             results.plot_components(ordered=True, path_to_save=path.join(dir_to_save, "components_sorted.svg"))
             results.plot_decomposition(path_to_save=path.join(dir_to_save, "decomposition.svg"), cmap="Blues")
             logging.info(f"[{uid}] Saved results in {dir_to_save}")
+        else:
+            print(*summary, sep="\n")
     except Exception as err:
         logging.error(f"Error occurred during the compiling and saving of results: {str(err)}")
 
@@ -283,5 +315,3 @@ def decompose(data: np.ndarray, params: dict, dir_to_save: str = "", **kwargs):
 # sort_idxs_descending = np.argsort(rep)[::-1]
 # rep = np.sort(rep)[::-1]
 # matrices = [squareform(components[i]) for i in range(components.shape[0])]
-# matrices = [matrices[i] for i in sort_idxs_descending]
-# plot_components(matrices, decomposition_train, rep, training_path, tag)
