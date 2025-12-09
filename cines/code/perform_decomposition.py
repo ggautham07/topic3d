@@ -229,7 +229,7 @@ def run_decomposition(root_dir,
     #makedirs(training_path, exist_ok=True)
 
     print(f">>> training path: {training_path_pattern}\n{unique_id}\n{training_path}")
-    makedirs(training_path, exist_ok=False)
+    makedirs(training_path, exist_ok=True)
 
     # Setup the log file path (in the same folder than the training)
     log_file = path.join(training_path, f"decomposition_{tag}_{unique_id}.log")

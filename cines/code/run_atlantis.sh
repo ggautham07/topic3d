@@ -17,7 +17,7 @@
 
 #cdm="/lus/home/CT3/c1916693/mnollmann/Repositories/topic3d/cines/code/launch.py"
 cmd=$HOME"/Repositories/topic3d/cines/code/launch.py"
-data="/mnt/PALM_dataserv/DATA/Topics/processed"
+data="/mnt/PALM_dataserv/DATA/Gautham/Topics/processed"
 #tag="takei2021SinglecellNuclearArchitecture_Mm-brain-chr17_wt"
 #tag="bardou2025_Dm-KC_wt"
 tag="hung2024BoundaryStackingInteractions_Mm-Hindlimb-Pitx1"

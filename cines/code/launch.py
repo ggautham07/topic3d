@@ -78,7 +78,7 @@ def main():
 
     start_time = time.time()
 
-    data_dir = os.path.join(args.root_dir, "data")
+    data_dir = os.path.join(args.root_dir, "processed/data")
 
     # Ensure the data folder exists
     if not os.path.isdir(data_dir):
