@@ -61,11 +61,13 @@ def parse_arguments():
                         default=2000, help="Number of iterations (default=2000)")
     parser.add_argument("--learning_method", type=str, choices=["batch", "online"], default="batch",
                         help="Learning method (batch/online, default=batch)")
+    parser.add_argument("--batch_size", type=int, default=32,
+                        help="Batch size while using online learning (default=32), ignored for batch learning")
     parser.add_argument("--num_jobs", type=int, default=1, help="Number of parallel jobs (default=1)")
     parser.add_argument("--train_data_proportion", type=float, metavar="[0.1-1]", default=1,
                         help="Training data proportion (default=1)")
-    parser.add_argument("--batch_size", type=int, default=128,
-                        help="Number of data to used in each iteration (only when online method is used)")
+    parser.add_argument("--normalization_method", type=str, choices=[None, "MMSF", "R(s)"], default=None,
+                        help="Method to normalize pairwise distances - dataset needs to exist in the processed data")
     
     # Parse arguments
     return parser.parse_args()
@@ -147,6 +149,7 @@ def main():
                     args.tag,
                     file_to_process,
                     n_components[index],
+                    args.normalization_method,
                     args.threshold,
                     args.hardness,
                     args.max_iter,

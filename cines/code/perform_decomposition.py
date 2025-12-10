@@ -56,6 +56,8 @@ def arg_parser():
     parser.add_argument("--learning_method", type=str, choices=["batch", "online"], default="batch", required=False)
     parser.add_argument("--num_jobs", type=int, default=1, required=False)
     parser.add_argument("--train_data_proportion", type=float, metavar="[0.1-1]", default=1, required=False)
+    parser.add_argument("--normalization_method", type=str, choices=[None, "MMSF", "R(s)"], default=None,
+                        help="Method to normalize pairwise distances - dataset needs to exist in the processed data")
     args = parser.parse_args()
 
     return args
@@ -145,28 +147,6 @@ def plot_components(matrices, decomposition, training_path, tag):
     plt.close(fig=fig)
 
 
-# def plot_mean_contact_matrix(contact_matrix, data_train, training_path, tag):
-#     # plotting mean contact matrix
-#     fig, ax = plt.subplots()
-
-#     # Check if it is suitable for imshow
-#     if len(contact_matrix.shape) == 2:
-#         im = ax.imshow(contact_matrix, cmap="Reds")
-#     else:
-#         logging.warning("! Error: contact_matrix is not 2D\n")
-
-#     plt.xticks(np.arange(0.5, contact_matrix.shape[0], 1), minor=True)
-#     plt.yticks(np.arange(0.5, contact_matrix.shape[0], 1), minor=True)
-#     plt.tick_params(which="minor", bottom=False, left=False)
-#     plt.grid(which="minor", color="white", lw=0.05)
-#     fig.colorbar(im, label="contact frequency", shrink=0.9)
-#     ax.set_title(
-#         f"Mean contact map | {tag} | n = {data_train.shape[0]}")
-#     plt.tight_layout()
-#     plt.savefig(path.join(training_path, f"{tag}.svg"), format="svg", bbox_inches='tight')
-#     plt.close(fig)
-
-
 def plot_decomposition(LDA_decomposition, n_topics, training_path):
     """ Plot a graph illustrating the representativity of each topic for the decompositions
 
@@ -195,7 +175,8 @@ def plot_decomposition(LDA_decomposition, n_topics, training_path):
 def run_decomposition(root_dir,
                       tag,
                       file_to_process,
-                      num_components,
+                      num_components: int,
+                      normalization_method,
                       contact_threshold,
                       hardness,
                       max_iter,
@@ -205,9 +186,8 @@ def run_decomposition(root_dir,
                       train_data_proportion,
                       unique_id,):
     
-## Define the training folder and the log
-## ======================================
-
+    ## Define the training folder and the log
+    ## ======================================
 
     # Setup the output file path
     unique_id = str(unique_id)[:6]
@@ -242,10 +222,10 @@ def run_decomposition(root_dir,
         "root_dir": root_dir,
         "tag": tag,
         "file_to_process": file_to_process,
+        "normalization_method": normalization_method,
         "contact_threshold": contact_threshold,
-	    "hardness": hardness,
+        "hardness": hardness,
         "num_components": num_components,
-        # "map_efficiency": 0.1,
         "max_iterations": max_iter,
         "learning_method": learning_method,
         "num_jobs": num_jobs,
@@ -279,9 +259,16 @@ def run_decomposition(root_dir,
     data_preproc = ProcessedData()
     data_preproc.load(path_to_file=file_to_process)
     data_trace = CoordsArrayStack(data_preproc.traces)
-    _, data_trace = data_trace.filter(min_efficiency=60, return_idxs_only=False)
-    data_filt = data_trace.pwds()
-    logging.info(f"Original PWDs shape: {data_preproc.pwds.shape}")
+    idxs_filt = data_trace.filter(min_efficiency=60, return_idxs_only=True)
+    if normalization_method is None:
+        logging.info("No normalization, raw dataset taken")
+        data_pwds = data_preproc.pwds[:]
+    else:
+        norm_method_mapping = {"MMSF": "distance distribution median-median scaling factor", "R(s)": "Euclidean vs genomic distance based adjustment"}
+        logging.info(f"Dataset normalized by {norm_method_mapping[normalization_method]} taken")
+        data_pwds = data_preproc.pwds_norm[normalization_method]
+    data_filt = PWDistArrayStack(np.squeeze(data_pwds[idxs_filt]))
+    logging.info(f"Original PWDs shape: {data_pwds.shape}")
     logging.info(f"Filtered PWDs shape: {data_filt.shape}")
     # data_ = PairwiseArrayStack(remove_first_diag_from_vecstack(data_))
     # logging.info(f"Diagonal-removed PWD shape: {data_.shape}")

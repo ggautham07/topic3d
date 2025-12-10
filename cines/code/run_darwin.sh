@@ -17,7 +17,7 @@
 
 #cdm="/lus/home/CT3/c1916693/mnollmann/Repositories/topic3d/cines/code/launch.py"
 cmd=$HOME"/Repositories/topic3d/cines/code/launch.py"
-rootdir="/mnt/PALM_dataserv/DATA/Gautham/Topics/"
+rootdir="/mnt/PALM_dataserv/DATA/Gautham/Topics"
 #tag="takei2021SinglecellNuclearArchitecture_Mm-brain-chr17_wt"
 #tag="bardou2025_Dm-KC_wt"
 tag="hung2024BoundaryStackingInteractions_Mm-Hindlimb-Pitx1"
@@ -40,6 +40,7 @@ $cmd \
     --threshold 150 \
     --hardness 1 \
     --learning_method batch \
-    --max_iter 1000
+    --max_iter 1000 \
+    --normalization_method "R(s)"
 
 #--num_components 10,15,20,25 --num_jobs 5 --threshold 150 --hardness 1 --learning_method batch --max_iter 500
