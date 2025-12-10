@@ -605,6 +605,12 @@ class ProcessedData:
         self.pwds = datasets.get("pwds", None)
         if self.pwds is not None:
             self.pwds = PWDistArrayStack(self.pwds)
+        self.pwds_norm = {}
+        self.pwds_norm["MMSF"] = datasets.get("pwds_norm-MMSF", None)
+        self.pwds_norm["R(s)"] = datasets.get("pwds_norm-R(s)", None)
+        for norm_key in self.pwds_norm.keys():
+            if self.pwds_norm[norm_key] is not None:
+                self.pwds_norm[norm_key] = PWDistArrayStack(self.pwds_norm[norm_key])
         self.metadata = attributes
 
 
@@ -755,6 +761,15 @@ class DecompositionResult:
             handler.attrs = self.metadata
         
         jl.dump(self.model, path.join(dir_to_save, "model_lda.jl"))
+
+
+    @staticmethod
+    def _set_figsave_flag(fp:str) -> bool:
+        """Set the flag to save a Figure based on path string length"""
+
+        if len(fp.strip()) > 0:
+            return True
+        return False
 
 
     def reconstruction(self, normalize=False):
@@ -908,17 +923,16 @@ class DecompositionResult:
         coherence_npmi = np.zeros((num_components,))
         coherence_cos = np.zeros((num_components,))
         data_used = np.asarray(data_used)
-        num_data_used = data_used.shape[0]
-        data_used_freq = np.sum(data_used, axis=0)
+        data_used_probs = np.mean(data_used, axis=0)
 
         EPS = 10**-5    # value of epsilon is kept constant
 
         for k in range(num_components):
             comp = components[k, :]
-            if randomize_data is False:
-                idx = np.argsort(comp)[::-1]  # return the bin index in descending order
-            else:
+            if randomize_data:
                 idx = np.random.permutation(comp.shape[0])
+            else:
+                idx = np.argsort(comp)[::-1]  # return the bin index in descending order
             idxs_top = idx[:num_top_pixels]
 
             # Compute the NPMI for all pairs of selected bins
@@ -926,10 +940,10 @@ class DecompositionResult:
             for m in range(num_top_pixels):
                 for n in range(m+1, num_top_pixels):
                     i, j = idxs_top[m], idxs_top[n]
-                    co_occurrence = np.sum((data_used[:, i] >= 0.75) & (data_used[:, j] >= 0.75))
-                    p_mn = co_occurrence / num_data_used
-                    p_nn = data_used_freq[idx[n]] / num_data_used
-                    p_mm = data_used_freq[idx[m]] / num_data_used
+                    co_occurrence = np.mean((data_used[:, i] >= 0.75) & (data_used[:, j] >= 0.75))
+                    p_mn = co_occurrence
+                    p_nn = data_used_probs[idx[n]]
+                    p_mm = data_used_probs[idx[m]]
                     if co_occurrence > 0:
                         pmi = np.log2((p_mn + EPS) / (p_nn * p_mm))
                         npmi[m, n] = - pmi / np.log2(p_mn + EPS)
@@ -945,7 +959,8 @@ class DecompositionResult:
                     c_cos += np.dot(npmi[m, :], npmi[n, :]) / (norm[m] * norm[n])
 
             coherence_cos[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_cos
-            coherence_npmi[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_npmi
+            # coherence_npmi[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_npmi
+            coherence_npmi[k] = c_npmi
 
         return coherence_npmi, coherence_cos
 
@@ -980,9 +995,9 @@ class DecompositionResult:
         else:
             assert isinstance(threshold, Number)
         
-        repr = self.representativity(threshold)
-        idxs = np.argsort(repr)[::-1]
-        freqs = repr / self.num_items
+        reprez = self.representativity(threshold)
+        idxs = np.argsort(reprez)[::-1]
+        freqs = reprez / self.num_items
 
         if return_freqs:
             return idxs, freqs
@@ -1088,7 +1103,7 @@ class DecompositionResult:
 
     # TODO add common_cbar in plotting
     def plot_components(self, normalized: bool = True, ordered: bool = False, 
-                        path_to_save: str = "", form: str = "triangle", cmap: str = "Reds"):
+                        path_to_save: str = "", form: str = "triangle", cmap: str = "Reds", **kwargs):
         """
         Plot all component matrices as triangular or square heatmaps.
 
@@ -1117,15 +1132,21 @@ class DecompositionResult:
 
         wflag = self._set_figsave_flag(path_to_save)
 
+
         map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
+        reprez = self.representativity(threshold=kwargs.get("threshold", (1 / self.num_components) + 0.1))
+        
         if ordered:
-            idxs = self.sort_components(threshold=0.333)
+            idxs = self.sort_components(threshold=kwargs.get("threshold", (1 / self.num_components) + 0.1))
+            reprez = reprez[idxs]
             items_to_plot = self.components_norm[idxs,:] if normalized else self.components[idxs,:]
         else:
             items_to_plot = self.components_norm if normalized else self.components
 
-        titles = [f"T{i}  |  $\\rho = ${r}" for i, r in enumerate(repr)]
+        idxs_comps = np.arange(self.num_components)
+        titles = [f"T{i}  |  $\\rho = ${r*100:.2f}%" \
+                  for i, r in zip(idxs_comps[idxs] if ordered else idxs_comps, reprez)]
         fig = map_form_fn[form](items=items_to_plot,
                                 titles=titles,
                                 cmap=cmap, cbar_label="norm. pseudocount" if normalized else "pseudocount")
@@ -1166,10 +1187,12 @@ class DecompositionResult:
         fig = plt.figure(figsize=(8, 10), dpi=300)
         ax = fig.add_subplot(1, 1, 1)
 
-        repr = self.representativity(threshold=0.333)
-        idxs = np.argsort(repr)[::-1]
+        reprez = self.representativity(threshold=(1 / self.num_components) + 0.1)
+        idxs = np.argsort(reprez)[::-1]
 
-        sns.heatmap(self.decomposition[idxs,:] if ordered else self.decomposition, cmap=cmap, ax=ax)
+        sns.heatmap(self.decomposition[:, idxs] if ordered else self.decomposition, cmap=cmap, ax=ax)
+        plt.xlabel("Topic #")
+        plt.ylabel("Proximity matrix #")
         # ax.get_xaxis().set_visible(False)
         # ax.get_xaxis().set_visible(True)
 

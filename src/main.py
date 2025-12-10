@@ -120,8 +120,8 @@ def prep_data(data: ProcessedData | dict, params: dict, dir_to_save: str = "", *
 
     pwds_filt = PWDistArrayStack(pwds[idxs,:][:])
     proximity = pwds_filt.proximity(threshold=params["proximity_threshold"], hardness=params["proximity_hardness"])
-    proximity_avg = np.nanmean(proximity, axis=0)    
-    
+    proximity_avg = np.nanmean(proximity, axis=0)
+    del traces, pwds
     if len(dir_to_save) > 0 and path.isdir(dir_to_save):
         logging.info(f"Plotting mean proximity matrix, type/shape: {type(proximity_avg)}/{proximity_avg.shape}")
         pwds_filt.plot_proximity_avg(threshold=params["proximity_threshold"],
@@ -133,6 +133,7 @@ def prep_data(data: ProcessedData | dict, params: dict, dir_to_save: str = "", *
                                                  hardness=params["proximity_hardness"],
                                                  num_items=16,
                                                  path_to_save=path.join(dir_to_save, "proximity_random_examples.svg"))
+    del pwds_filt
 
     return proximity
 
@@ -168,7 +169,6 @@ def split_data(data:np.ndarray, train_data_proportion: Number = 1, **kwargs):
         data_test = data[idxs_test]
         logging.info(f"[{uid}] Training data shape: {data_train.shape}, testing data shape: {data_test.shape}")
         return data_train, data_test
-
 
 def initialize(tag: str, params: dict, dir_base: str, dir_data: str):
     """

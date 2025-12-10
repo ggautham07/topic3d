@@ -8,19 +8,20 @@ from scipy.spatial.distance import squareform
 from glob import glob
 import joblib as jl
 
-dir_root = "/mnt/grey/DATA/users/gautham/Workspace/topics"
+# dir_root = "/mnt/grey/DATA/users/gautham/Workspace/topics"
+dir_root = "/mnt/PALM_dataserv/DATA/Gautham/Topics"
 # dir_root = "/home/ggautham07/Nextcloud/Datasets"
 
 # Load some data
 with h5py.File(path.join(dir_root,
-                         "data",
                          "processed",
-                         "bardou2025_Dm-KC_wt.h5")) as fp:     # messina2024Chromatin_Mm-Pancreas-Pdx1_wt
+                         "data",
+                         "chen2023Structural_Hs-CNCC_wt_0_bc-0-52.h5")) as fp:     # messina2024Chromatin_Mm-Pancreas-Pdx1_wt
 # with h5py.File(path.join(dir_root,
 #                          "bintu2018Superresolution_Hs-HCT116-40-83_wt.h5")) as fp:
-    # data_tr = CoordsArrayStack(fp["traces"][:])
+    data_tr = CoordsArrayStack(fp["traces"][:])
     data_pwd = PWDistArrayStack(fp["pwds"][:])
-# print("Loaded traces with shape", data_tr.shape)
+print("Loaded traces with shape", data_tr.shape)
 # with h5py.File("/mnt/grey/DATA/users/gautham/Workspace/doc/polymer_simulations/chrom_pdx1_mouse/trajectories/locus/02_loop_extrusion_manual-optim/pwd_matrices.h5") as fp:
 #     arr = fp["pairwise_distances"][:]
 #     arr = np.moveaxis(arr, -1, 0)[:]
@@ -33,9 +34,13 @@ with h5py.File(path.join(dir_root,
 print("Loaded pairwise distances with shape", data_pwd.shape)
 
 # effs = data_tr.efficiency(by="barcode")
-# t3viz.plot_bar({"barcode_id": np.arange(len(effs)), "efficiency": effs}, path_to_save="out/2.png")
-# data_tr.plot_bc_efficiency(path_to_save="out/h_0.png", alpha=0.95)
-data_pwd.plot_pixel_efficiency(path_to_save="out/bardou_pixex.png")
+# fig = t3viz.plot_bar(data={"barcode_id": np.arange(len(effs)), "efficiency": effs},
+#                      x="barcode_id",
+#                      y="efficiency",)
+# fig.savefig("out/chen_bc_effs_by_bc.png")
+# plt.close(fig)
+data_tr.plot_bc_efficiency(path_to_save="out/chen_bc_effs_by_bc.png", alpha=0.95)
+data_pwd.plot_pixel_efficiency(path_to_save="out/chen_px_effs.png")
 
 # hardnesses = [0.1, 0.2, 0.3, 0.4, 0.5, 1]
 # thresholds = [5, 10, 10, 15, 15, 20] # [50, 100, 150, 150, 150, 150, 200, 250, 300]
@@ -44,20 +49,20 @@ data_pwd.plot_pixel_efficiency(path_to_save="out/bardou_pixex.png")
 # data_pwd.plot_pwds_avg(method="median", path_to_save="out/1_sq.png", form="square", cmap="OrRd_r")
 # data_pwd.plot_pixel_efficiency(path_to_save="out/2_sq.png", form="square")
 
-_, data_pwd = data_pwd.filter(min_efficiency=0.5, return_idxs_only=False)
-print(data_pwd.num_items)
+# _, data_pwd = data_pwd.filter(min_efficiency=0.5, return_idxs_only=False)
+# print(data_pwd.num_items)
 
-data_pwd.plot_pwds_avg(path_to_save="out/bardou_pwds.png", form="triangle")
+data_pwd.plot_pwds_avg(path_to_save="out/chen_pwds.png", form="triangle")
 
 data_pwd.plot_pwds_random_examples(num_items=36, random_seed=42,
-                                   path_to_save="out/bardou_pwds_ex.png", form="triangle", include_cbar=False)
+                                   path_to_save="out/chen_pwds_examples.png", form="triangle", include_cbar=False)
 
-data_pwd.plot_proximity_avg(threshold=0.15, hardness=1,
-                            path_to_save="out/bardou_prox.png", form="triangle")
+data_pwd.plot_proximity_avg(threshold=150, hardness=1,
+                            path_to_save="out/chen_prox.png", form="triangle")
 
-data_pwd.plot_proximity_random_examples(threshold=0.15, hardness=1,
+data_pwd.plot_proximity_random_examples(threshold=150, hardness=1,
                                         num_items=36, random_seed=42,
-                                        path_to_save="out/bardou_prox_ex.png", form="triangle", include_cbar=False)
+                                        path_to_save="out/chen_prox_examples.png", form="triangle", include_cbar=False)
 
 
 # fp = "/mnt/grey/DATA/users/JB/Topic_analysis/2025_FOF_format/data/barcode_efficiency/Pdx1LR_ND_mouse_pancreas_exo_endo.npy"

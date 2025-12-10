@@ -9,7 +9,8 @@ from glob import glob
 # from scipy.spatial.distance import pdist, squareform
 from sys import stdout
 # from matplotlib import colormaps
-from classes import CoordsArrayStack, PairwiseArrayStack, RawData, ProcessedData
+from topic3d.datatypes import CoordsArrayStack, PWDistArrayStack
+from topic3d.handlers import RawData, ProcessedData
 from copy import copy, deepcopy
 
 
