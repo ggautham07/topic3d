@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# 
+#
 
 from os import path, makedirs
 from glob import glob
@@ -58,6 +58,7 @@ def arg_parser():
     parser.add_argument("--train_data_proportion", type=float, metavar="[0.1-1]", default=1, required=False)
     parser.add_argument("--normalization_method", type=str, choices=[None, "MMSF", "R(s)"], default=None,
                         help="Method to normalize pairwise distances - dataset needs to exist in the processed data")
+    parser.add_argument("--imputed", action="store_true", required=False)
     args = parser.parse_args()
 
     return args
@@ -177,6 +178,7 @@ def run_decomposition(root_dir,
                       file_to_process,
                       num_components: int,
                       normalization_method,
+                      imputed,
                       contact_threshold,
                       hardness,
                       max_iter,
@@ -199,7 +201,7 @@ def run_decomposition(root_dir,
     else:
         training_path_pattern = root_dir + (
             f"/training/{tag}/{num_components:02d}-components_threshold={contact_threshold}_hardness={hardness}"
-            f"_maxiters={max_iter}_{learning_method}_data_prop_{train_data_proportion}_")
+            f"_maxiters={max_iter}_{learning_method}_data_prop_{train_data_proportion}{'_imputed' if imputed else ''}")
 
 
     training_path_pattern = training_path_pattern.rstrip('/')
@@ -223,6 +225,7 @@ def run_decomposition(root_dir,
         "tag": tag,
         "file_to_process": file_to_process,
         "normalization_method": normalization_method,
+        "imputed": imputed,
         "contact_threshold": contact_threshold,
         "hardness": hardness,
         "num_components": num_components,
@@ -258,7 +261,8 @@ def run_decomposition(root_dir,
     print(f"Loading data from {file_to_process}")
     data_preproc = ProcessedData()
     data_preproc.load(path_to_file=file_to_process)
-    data_trace = CoordsArrayStack(data_preproc.traces)
+    data_trace = CoordsArrayStack(data_preproc.traces_imputed if imputed else data_prepoc.traces)
+    logging.info("Taking the imputed trace file to filter by efficiency" if imputed else "Taking non-imputed dataset to filter by efficiency")
     idxs_filt = data_trace.filter(min_efficiency=60, return_idxs_only=True)
     if normalization_method is None:
         logging.info("No normalization, raw dataset taken")
@@ -266,7 +270,7 @@ def run_decomposition(root_dir,
     else:
         norm_method_mapping = {"MMSF": "distance distribution median-median scaling factor", "R(s)": "Euclidean vs genomic distance based adjustment"}
         logging.info(f"Dataset normalized by {norm_method_mapping[normalization_method]} taken")
-        data_pwds = data_preproc.pwds_norm[normalization_method]
+        data_pwds = data_preproc.pwds_imputed_norm-[normalization_method] if imputed else data_prepoc.pwds_norm-[normalization_method]
     data_filt = PWDistArrayStack(np.squeeze(data_pwds[idxs_filt]))
     logging.info(f"Original PWDs shape: {data_pwds.shape}")
     logging.info(f"Filtered PWDs shape: {data_filt.shape}")

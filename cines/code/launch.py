@@ -68,7 +68,7 @@ def parse_arguments():
                         help="Training data proportion (default=1)")
     parser.add_argument("--normalization_method", type=str, choices=[None, "MMSF", "R(s)"], default=None,
                         help="Method to normalize pairwise distances - dataset needs to exist in the processed data")
-    
+    parser.add_argument("--imputed", action="store_true", required=False)
     # Parse arguments
     return parser.parse_args()
 
@@ -150,6 +150,7 @@ def main():
                     file_to_process,
                     n_components[index],
                     args.normalization_method,
+                    args.imputed,
                     args.threshold,
                     args.hardness,
                     args.max_iter,
