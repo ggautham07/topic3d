@@ -707,7 +707,7 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
     # ------------------------------------------------------------------
     if enrich:
         txt_lines = [f"{et}: {OR:.{OR_DIGITS}f}" for et, OR in enrich]
-        ax.text(0.15, 0.45, "\n".join(txt_lines),
+        ax.text(0.01, 0.3, "\n".join(txt_lines),
                 transform=ax.transAxes,
                 ha="left", va="top", fontsize=font_info["tick_label"],   # - 3 (before)
                 bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="black", lw=0.7))

@@ -170,6 +170,7 @@ def split_data(data:np.ndarray, train_data_proportion: Number = 1, **kwargs):
         logging.info(f"[{uid}] Training data shape: {data_train.shape}, testing data shape: {data_test.shape}")
         return data_train, data_test
 
+
 def initialize(tag: str, params: dict, dir_base: str, dir_data: str):
     """
     Initialize the directory to train data and save results
@@ -215,9 +216,9 @@ def decompose(params: dict,
     
     assert isinstance(params, dict)
     assert isinstance(data_train, np.ndarray) and data_train.ndim == 2
-    flag_fit_trans = True
+    flag_ft = True      # Train and test data same if True - performs model.fit_transform()
     if data_test is not None:
-        flag_fit_trans = False
+        flag_ft = False
         assert isinstance(data_test, np.ndarray) and data_test.ndim == 2
     dim = int(np.ceil(np.sqrt(data_train.shape[-1] * 2)))
     assert dim * (dim-1) == data_train.shape[-1] * 2  # ensure that vector can be squareformed
@@ -246,7 +247,7 @@ def decompose(params: dict,
     try:
         logging.info(f"[{uid}] Starting training...")
         time_start = perf_counter()
-        if flag_fit_trans:
+        if flag_ft:
             decomposition = model.fit_transform(data_train)
         else:
             model = model.fit(data_train)
@@ -262,7 +263,7 @@ def decompose(params: dict,
                                       params=params)
         summary = kwargs.get(summary, params)
         summary.update({"model_num_iterations": model.n_iter_,
-                        "model_score": model.score(data_train if flag_fit_trans else data_test),
+                        "model_score": model.score(data_train if flag_ft else data_test),
                         "model_perplexity": model.bound_,
                         })
         if wflag:
@@ -280,38 +281,3 @@ def decompose(params: dict,
     logging.info(f"[{uid}] Completed in {time_elapsed}")
 
     return results
-
-
-## Start training and save the results at the end
-## ==============================================
-
-
-# # starting training
-
-# try:
-#     if fit_transform_flag:
-#         decomposition_train = model.fit_transform(data)
-#         decomposition_test = []
-#     else:
-#         model.fit(data_train)
-#         decomposition_test = model.transform(data_test)
-#         decomposition_train = model.transform(data_train)
-#     components = model.components_
-#     components_norm = components / np.sum(components, axis=1)[:, np.newaxis]      # for normalised pseudocount
-#     time_elapsed = readable_duration(perf_counter() - time_start)
-
-#     # updating summary dict with results
-#     logging.info(f"[{unique_id}] Training finished successfully")
-#     results = {
-#         "model_num_iterations": model.n_iter_,
-#         "model_score": model.score(data),
-#         "model_perplexity": model.bound_,
-#     }
-#     summary.update(results)
-
-# # compute representativities and sort matrices by the values
-# rep_threshold = 0.1
-# rep = np.mean(decomposition_train >= rep_threshold, axis=0)
-# sort_idxs_descending = np.argsort(rep)[::-1]
-# rep = np.sort(rep)[::-1]
-# matrices = [squareform(components[i]) for i in range(components.shape[0])]

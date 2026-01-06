@@ -602,15 +602,23 @@ class ProcessedData:
         self.traces = datasets.get("traces", None)
         if self.traces is not None:
             self.traces = CoordsArrayStack(self.traces)
+        self.traces_imputed = datasets.get("traces_imputed", None)
+        if self.traces_imputed is not None:
+            self.traces_imputed = CoordsArrayStack(self.traces_imputed)
         self.pwds = datasets.get("pwds", None)
         if self.pwds is not None:
             self.pwds = PWDistArrayStack(self.pwds)
         self.pwds_norm = {}
         self.pwds_norm["MMSF"] = datasets.get("pwds_norm-MMSF", None)
         self.pwds_norm["R(s)"] = datasets.get("pwds_norm-R(s)", None)
+        self.pwds_imputed_norm = {}
+        self.pwds_imputed_norm["MMSF"] = datasets.get("pwds_imputed_norm-MMSF", None)
+        self.pwds_imputed_norm["R(s)"] = datasets.get("pwds_imputed_norm-R(s)", None)
         for norm_key in self.pwds_norm.keys():
             if self.pwds_norm[norm_key] is not None:
                 self.pwds_norm[norm_key] = PWDistArrayStack(self.pwds_norm[norm_key])
+            if self.pwds_imputed_norm[norm_key] is not None:
+                self.pwds_imputed_norm[norm_key] = PWDistArrayStack(self.pwds_imputed_norm[norm_key])
         self.metadata = attributes
 
 
@@ -660,7 +668,7 @@ class ProcessedData:
                     continue
 
 
-#TODO
+# TODO
 class DecompositionResult:
     """
     Handler for LDA-based decomposition results and downstream analyses.
@@ -774,7 +782,7 @@ class DecompositionResult:
 
     def reconstruction(self, normalize=False):
         """
-        Reconstruct contact vectors from the component and decomposition matrices.
+        Reconstruct proximity vectors from the components and decomposition matrices.
 
         Parameters
         ----------
@@ -792,18 +800,18 @@ class DecompositionResult:
         """
 
         if normalize:
-            components_norm = self.components / self.components.sum(axis=1)[:, np.newaxis]
-            return self.decomposition @ components_norm
+            return self.decomposition @ self.components_norm
         return self.decomposition @ self.components
     
-    
-    # TODO automatic extraction of threshold from a weights distribution, preferably multiple options
+
+    # TODO multiple methods
     @staticmethod
-    def _extract_threshold(X):
-        return np.quantile(X, 10)
+    def _extract_threshold(decomposition, method=None):
+        if method is None:
+            return (1 / decomposition.shape[-1]) + 0.1
 
 
-    def representativity(self, threshold: Number = 0.333) -> np.ndarray:
+    def representativity(self, threshold: float = None) -> np.ndarray:
         """
         Compute the representativity of each component across the dataset.
 
@@ -813,7 +821,7 @@ class DecompositionResult:
         Parameters
         ----------
         threshold : float, optional
-            Activation threshold to count a component as "present" (default is 0.2).
+            Activation threshold to count a component as "present" (default will be $\\frac{1}{n_c} + 0.1$).
 
         Returns
         -------
@@ -832,8 +840,8 @@ class DecompositionResult:
             assert isinstance(threshold, Number)
 
         return np.mean(self.decomposition >= threshold, axis=0)
-    
-       
+
+
     @staticmethod
     def _compute_coherence_umass(components, data_used, num_top_pixels=10, randomize_data=False):
         """
@@ -959,8 +967,7 @@ class DecompositionResult:
                     c_cos += np.dot(npmi[m, :], npmi[n, :]) / (norm[m] * norm[n])
 
             coherence_cos[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_cos
-            # coherence_npmi[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_npmi
-            coherence_npmi[k] = c_npmi
+            coherence_npmi[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_npmi
 
         return coherence_npmi, coherence_cos
 
@@ -1002,17 +1009,66 @@ class DecompositionResult:
         if return_freqs:
             return idxs, freqs
         return idxs
-    
+
+
+    # TODO figure out a way to have training or testing data ready to compute coherence
+    # def coherence(self, method: str = "all", num_top_pixels : int = None):
+    #     """
+    #     Compute coherence metrics (NPMI, cosine, uMass) for topic components.
+
+    #     Parameters
+    #     ----------
+    #     method : str, optional
+    #         Which coherence metric to compute: "npmi-cos", "umass", or "all" (default).
+    #     num_top_pixels : int, optional
+    #         Number of top pixels to use per component. Defaults to 10% of component length.
+
+    #     Returns
+    #     -------
+    #     tuple
+    #         Coherence scores depending on selected method:
+    #         - If "npmi-cos": (npmi, cosine)
+    #         - If "umass": (umass,)
+    #         - If "all": ((npmi, cosine), umass)
+
+    #     Examples
+    #     --------
+    #     >>> model.coherence(method="npmi-cos")
+    #     """
+
+    #     assert isinstance(method, str) and method.lower() in ["npmi-cos", "umass", "all"]
+    #     assert self.data_training is not None
+    #     if num_top_pixels is None:
+    #         num_top_pixels = self.components.shape[1] // 10
+    #     else:
+    #         isinstance(num_top_pixels, int)
+
+    #     out = []
+    #     if method in ["npmi-cos", "all"]:
+    #         out.append(self._compute_coherence_npmi_cos(components=self.components,
+    #                                                     data_used=self.data_training,
+    #                                                     num_top_pixels=num_top_pixels,
+    #                                                     randomize_data=False))
+    #     if method in ["umass", "all"]:
+    #         out.append(self._compute_coherence_umass(components=self.components,
+    #                                                  data_used=self.data_training,
+    #                                                  num_top_pixels=num_top_pixels,
+    #                                                  randomize_data=False))
+
+    #     return tuple(out)
+
 
     # TODO returning mean divergence for decomposition, sorting the matrix by least to most distant?
-    def divergence(self, path_to_save:str = None):
+    def divergence(self, metric="jensenshannon", path_to_save:str = ""):
         """
-        Compute the pairwise Jensen-Shannon divergence between all components.
+        Compute the pairwise divergence between all components.
 
         Optionally, plot and save the divergence matrix as a heatmap.
 
         Parameters
         ----------
+        metric : str, optional
+            a metric accepted by `scipy.spatial.distance.pdist`, default 'jensenshannon'
         path_to_save : str, optional
             File path to save the plotted heatmap (must end with .svg or .png).
 
@@ -1027,11 +1083,12 @@ class DecompositionResult:
         >>> model.divergence("divergence_plot.svg")
         """
 
-        pw_divergence = pdist(self.components, metric="jensenshannon")
-        
-        if path_to_save is not None:
+        wflag = self._set_figsave_flag(path_to_save)
+
+        pw_divergence = pdist(self.components, metric=metric)
+
+        if wflag:
             import matplotlib.pyplot as plt
-            assert isinstance(path_to_save, str)
             assert path_to_save.endswith((".svg", ".png"))
             pw_divergence = squareform(pw_divergence)
             fig, ax = plt.subplots()
@@ -1039,7 +1096,7 @@ class DecompositionResult:
             fig.set_figheight(8)
             im = ax.imshow(pw_divergence, cmap="Blues")
             cbar = fig.colorbar(im, shrink=0.85)
-            cbar.set_label("Jensen-Shannon divergence", labelpad=6)
+            cbar.set_label(f"{metric} distance", labelpad=6)
             ax.xaxis.tick_top()
             ax.xaxis.set_label_position("top")
             ticks_labels = np.arange(self.num_components)
@@ -1050,55 +1107,10 @@ class DecompositionResult:
             ax.set_xlabel("Component #", labelpad=10)
             ax.set_ylabel("Component #", labelpad=10)
             plt.tight_layout()
-            fig.savefig(path_to_save, dpi=300)
-        
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+
         return pw_divergence
-
-
-    def coherence(self, method: str = "all", num_top_pixels : int = None):
-        """
-        Compute coherence metrics (NPMI, cosine, uMass) for topic components.
-
-        Parameters
-        ----------
-        method : str, optional
-            Which coherence metric to compute: "npmi-cos", "umass", or "all" (default).
-        num_top_pixels : int, optional
-            Number of top pixels to use per component. Defaults to 10% of component length.
-
-        Returns
-        -------
-        tuple
-            Coherence scores depending on selected method:
-            - If "npmi-cos": (npmi, cosine)
-            - If "umass": (umass,)
-            - If "all": ((npmi, cosine), umass)
-
-        Examples
-        --------
-        >>> model.coherence(method="npmi-cos")
-        """
-
-        assert isinstance(method, str) and method.lower() in ["npmi-cos", "umass", "all"]
-        assert self.data_training is not None
-        if num_top_pixels is None:
-            num_top_pixels = self.components.shape[1] // 10
-        else:
-            isinstance(num_top_pixels, int)
-
-        out = []
-        if method in ["npmi-cos", "all"]:
-            out.append(self._compute_coherence_npmi_cos(components=self.components,
-                                                        data_used=self.data_training,
-                                                        num_top_pixels=num_top_pixels,
-                                                        randomize_data=False))
-        if method in ["umass", "all"]:
-            out.append(self._compute_coherence_umass(components=self.components,
-                                                     data_used=self.data_training,
-                                                     num_top_pixels=num_top_pixels,
-                                                     randomize_data=False))
-
-        return tuple(out)
 
 
     # TODO add common_cbar in plotting
@@ -1132,7 +1144,6 @@ class DecompositionResult:
 
         wflag = self._set_figsave_flag(path_to_save)
 
-
         map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
         reprez = self.representativity(threshold=kwargs.get("threshold", (1 / self.num_components) + 0.1))
@@ -1155,9 +1166,8 @@ class DecompositionResult:
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
         return fig
-    
 
-    # TODO
+
     def plot_decomposition(self, ordered: bool = True,
                            path_to_save: str = "", cmap: str = "Blues"):
         """
@@ -1184,6 +1194,8 @@ class DecompositionResult:
 
         import seaborn as sns
 
+        wflag = self._set_figsave_flag(path_to_save)
+
         fig = plt.figure(figsize=(8, 10), dpi=300)
         ax = fig.add_subplot(1, 1, 1)
 
@@ -1193,12 +1205,10 @@ class DecompositionResult:
         sns.heatmap(self.decomposition[:, idxs] if ordered else self.decomposition, cmap=cmap, ax=ax)
         plt.xlabel("Topic #")
         plt.ylabel("Proximity matrix #")
-        # ax.get_xaxis().set_visible(False)
-        # ax.get_xaxis().set_visible(True)
 
-        if isinstance(path_to_save, str) and len(path_to_save) > 0:
-            plt.savefig(path_to_save, bbox_inches="tight")
-            
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
         return fig
 
 
