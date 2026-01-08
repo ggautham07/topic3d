@@ -30,7 +30,7 @@ from collections import Counter
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from . import helper as hp
+from . import _helper as hp
 
 
 # Setting global matplotlib parameters

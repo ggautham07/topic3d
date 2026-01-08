@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Helper functions to work with chromatin tracing data (:mod:`topic3d.helper`)
+Helper functions to work with chromatin tracing data (:mod:`topic3d._helper`)
 =====================================================
 
 .. authors:: ggautham07
