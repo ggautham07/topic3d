@@ -999,7 +999,7 @@ class PWDistArrayStack(np.ndarray):
         idxs = random_gen.integers(self.num_items, size=num_items)
         
         fig = map_form_fn[form](items=self.proximity(threshold, hardness)[idxs, ...],
-                                titles=[f"Index  {i:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}" for i in idxs],
+                                titles=[f"Idx {i:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}" for i in idxs],
                                 cmap=cmap,
                                 cbar_label="proximity",
                                 include_cbar=include_cbar)

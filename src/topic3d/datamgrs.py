@@ -36,7 +36,6 @@ from itertools import combinations
 import h5py
 import numpy as np
 import pandas as pd
-from scipy.spatial.distance import squareform, pdist
 
 import matplotlib.pyplot as plt
 

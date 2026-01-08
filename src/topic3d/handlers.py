@@ -108,9 +108,16 @@ class DecompositionResult:
         with h5py.File(path.join(dir_to_save, "results.h5"), mode="w") as handler:
             handler.create_dataset(name="components", data=self.components)
             handler.create_dataset(name="decomposition", data=self.decomposition)
-            handler.create_dataset(name="data_idxs/training", data=self.data_training)
-            handler.create_dataset(name="data_idxs/testing", data=self.data_testing)
-            handler.attrs = self.metadata
+            # # TODO store original dataset indices of the training and testing sets using self.data_idxs = kwargs.get()
+            # handler.create_dataset(name="data_idxs/training", data=self.data_training)
+            # handler.create_dataset(name="data_idxs/testing", data=self.data_testing)
+            for k, v in self.metadata.items():
+                try:
+                    handler.attrs[k] = v
+                except TypeError:
+                    handler.attrs[k] = str(v)
+                else:
+                    raise
         
         jl.dump(self.model, path.join(dir_to_save, "model_lda.jl"))
 

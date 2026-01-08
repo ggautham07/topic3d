@@ -5,11 +5,12 @@ from time import perf_counter
 from numbers import Number
 import json
 import numpy as np
+import h5py
 from sklearn.decomposition import LatentDirichletAllocation
 
 from topic3d.handlers import DecompositionResult
 
-from ._logging import setup_log
+from ._logging import setup_log, setup_log_simple
 
 
 # To display durations in seconds in a more readable format
@@ -31,27 +32,31 @@ def readable_duration(duration:Number):
 ##################################################################################################################
 
 
-def initialize(params: dict, dir_results: str, path_to_data: str, tag: str = None):
+def initialize(params: dict, dir_results: str, path_to_data: str, tag: str = None, save_logs=True):
     """
     Initialize the directory to train data and save results
     """
 
     assert type(params) == dict
+    tag = "".join(path.basename(path_to_data).split(".")[:-1]) if tag is None else tag.strip()
     assert type(tag) == str
     assert type(dir_results) == str and path.isdir(dir_results)
+    assert type(save_logs) == bool
+
+    # Setting a unique ID for the training
     uid = str(uuid4())[:6]
-    tag = "".join(path.basename(path_to_data).split(".")[:-1]) if tag is None else tag.strip()
     
-    # TODO set folder pattern to highlight the most important parameters OR have a function to list and pull trainings
+    # TODO set folder pattern to highlight only most important parameters OR have a function to list and pull trainings
     dir_pattern = f"{params["num_components"]:02d}-components_threshold={params["proximity_threshold"]}"
     dir_training = path.join(dir_results, tag, dir_pattern, f"{uid}")
     makedirs(dir_training, exist_ok=False)
 
-    # Setup the log file path (in the same folder as the training)
-    log_file = path.join(dir_training, f"{uid}.log")
-
-    # Setup logging to file and console
-    setup_log(log_file)
+    if save_logs:
+        log_file = path.join(dir_training, f"logs.log")    # Setup the log file path (in the same folder as training)
+        setup_log(log_file)     # Setup logging to file and console
+    else:
+        setup_log_simple()
+    
     logging.info("-" * 50)
     logging.info(f"[{uid}] Will save trainings to: {dir_training}")
 
@@ -59,13 +64,14 @@ def initialize(params: dict, dir_results: str, path_to_data: str, tag: str = Non
     summary.update({"uid": uid,
                     "path_to_data": path_to_data,
                     "tag": tag,
-                    "path_to_training": dir_training,
-                    "log": log_file})
+                    "path_to_training": dir_training,})
+    if save_logs:
+        summary.update({"path_to_log": log_file})
 
     logging.info(f"Settings summary for run: {uid}")
     for key in summary.keys():
-        logging.info(f" {key}: {summary[key]}")
-    json.dump(summary, open(dir_training, mode="x"), indent=4)
+        logging.info(f"    {key}: {summary[key]}")
+    json.dump(summary, open(path.join(dir_training, "summary.json"), mode="x"), indent=4)
 
     return summary
 
@@ -103,13 +109,12 @@ def decompose(params: dict,
     try:
         model = LatentDirichletAllocation(n_components=params["num_components"],
                                           max_iter=params["max_iter"],
-                                          n_jobs=params["num_jobs"],
                                           learning_method=params["learning_method"],
-                                          batch_size=params["batch_size"] \
-                                            if params["learning_method"] == "online" else None,
-                                          random_state=params["random_seed"])
+                                          batch_size=params["batch_size"],
+                                          random_state=params["random_state"])
     except Exception as err:
-        logging.error(f"Error occurred during LDA instantiation: {str(err)}")
+        logging.error(f"[{uid}] Error occurred during LDA instantiation: {str(err)}")
+        raise
 
     # performing the training and transformation of data to get results
     try:
@@ -127,7 +132,6 @@ def decompose(params: dict,
     try:
         results = DecompositionResult(model=model,
                                       decomposition=decomposition,
-                                      data_training=np.arange(data_train.shape[0]),
                                       params=params)
         summary = kwargs.get("summary", params)
         summary.update({"model_num_iterations": model.n_iter_,
@@ -144,6 +148,33 @@ def decompose(params: dict,
             print(*summary, sep="\n")
     except Exception as err:
         logging.error(f"[{uid}] Error occurred during the compiling and saving of results: {str(err)}")
+        raise
+
+    logging.info(f"[{uid}] Starting coherence computations for the trained model using training data")
+    try:
+        prop_top_pixels_all = [0.5, 1, 1.5, 2, 2.5, 3]   # NOTE, in percentage
+        for prop_top_pixels in prop_top_pixels_all:
+            num_top_pixels = int((prop_top_pixels / 100) * results.components.shape[1])
+            if num_top_pixels < 3:
+                prop_top_pixels_all.append(np.max(prop_top_pixels_all)+0.5)
+                continue
+            logging.info(f"Taking {num_top_pixels} top pixels...")
+            c_umass = results._compute_coherence_umass(components=results.components,
+                                                        data_used=data_train,
+                                                        num_top_pixels=num_top_pixels,
+                                                        randomize_data=False)
+            c_npmi, c_cos = results._compute_coherence_npmi_cos(components=results.components,
+                                                                data_used=data_train,
+                                                                num_top_pixels=num_top_pixels,
+                                                                randomize_data=False)
+        with h5py.File(path.join(dir_to_save, "results.h5"), "r+") as handler:
+            handler.create_dataset(f"coherence/umass/{prop_top_pixels}", data=c_umass)
+            handler.create_dataset(f"coherence/cos/{prop_top_pixels}", data=c_cos)
+            handler.create_dataset(f"coherence/npmi/{prop_top_pixels}", data=c_npmi)
+    except Exception as err:
+        logging.error(f"[{uid}] Error occurred during coherence computation: {str(err)}")
+        raise
+    logging.info(f"[{uid}] Finished coherence computations for the trained model")
 
     time_elapsed = readable_duration(perf_counter() - time_start)
     logging.info(f"[{uid}] Completed in {time_elapsed}")
