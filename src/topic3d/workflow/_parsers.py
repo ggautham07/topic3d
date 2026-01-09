@@ -130,7 +130,7 @@ def parse_cli_arguments(parallelization=False):
                         help="Maximum number of training iterations (default=1000)",
                         metavar="[1-5000]",
                         choices=range(1, 5001),
-                        default=2000)
+                        default=1000)
     
     parser.add_argument("--learning_method",
                         type=str,
@@ -142,8 +142,8 @@ def parse_cli_arguments(parallelization=False):
     parser.add_argument("--batch_size",
                         type=int,
                         required=False,
-                        help="Batch size while using online learning (default=32), ignored for batch learning",
-                        default=32)
+                        help="Batch size while using online learning, ignored for batch learning (default=32)",
+                        default=64)
     
     parser.add_argument("--train_data_proportion",
                         type=float,
@@ -164,8 +164,6 @@ def parse_cli_arguments(parallelization=False):
                             required=False,
                             help="Number of parallel jobs (default=1)",
                             default=1)
-        
-    
 
     # Parse and return arguments
     return parser.parse_args()

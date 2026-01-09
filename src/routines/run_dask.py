@@ -1,174 +1,148 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# 
 """
-Example run:
+Dask-based script for running parallel topic decomposition on chromatin tracing data using topic3d.
 
-./launch.py --num_components 10,20 --root_dir ~/grey/rawData_2024/Experiment_96_Topic_Gautham/topic_decomposition --tag hafner_chr6_CTCF_0 --num_jobs 2
+This script:
+1. Parses CLI arguments.
+2. Loads raw or preprocessed proximity data.
+3. Initializes the output directory structure, configuration and logging if indicated.
+4. Prepares data for topic modeling by computing proximity vectors.
+5. Optionally splits data into training and testing subsets.
+6. Trains an LDA model and saves results.
 
-go to http://localhost:8787/ to see output
+An example run:
 
-to connect to remote server you need to remap the localhost, eg:
+$ topic3d-run-dask \
+    --data_file path/to/data/file.npy \
+    --results_base_dir path/to/create/results/folder \
+    --tag 'datasetname-tests' \
+    --save_logs \
+    --proximity_threshold 150 \
+    --num_components 10,20,30 \
+    --max_iter 500 \
+    --train_data_proportion 0.75 \
+    --num_jobs 10
 
-ssh -L 8888:localhost:8787 marcnol@lifou
+This script is intended to be called from the CLI wrapper `topic3d-run-dask` and not directly by end users.
 
-here you go to http://localhost:8888/ to see output
-
+Dependencies:
+- topic3d.workflow._parsers
+- topic3d.workflow._dataops
+- topic3d.workflow.training
 """
+
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import argparse
-import os
-from dask.distributed import Client, LocalCluster
-from topic3d.workflow.training import initialize, decompose
-from concurrent.futures import ProcessPoolExecutor
-import uuid
+from copy import deepcopy
 import time
 
-# test this later to see if performance improves!
 from dask import config
+from dask.distributed import Client, LocalCluster
+from distributed import as_completed
+# from concurrent.futures import ProcessPoolExecutor
 
-#config.set({'distributed.worker.daemon': False})
-config.set({'distributed.worker.daemon': True}) # need to test this in cines!
+from topic3d.workflow._parsers import parse_cli_arguments
+from topic3d.workflow._dataops import load_data, prepare_proximity_data, split_proximity_data
+from topic3d.workflow.training import initialize, decompose
 
-# Helper function to parse a single integer or a list of integers
-def parse_num_components(value):
-    try:
-        # Check if it's a single integer
-        if ',' in value:
-            # If it contains commas, split and parse as a list of integers
-            return [int(v) for v in value.split(',')]
-        else:
-            # Otherwise, parse it as a single integer and return it as a list
-            return [int(value)]
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"Invalid value for num_components: {value}")
+config.set({'distributed.worker.daemon': False})
 
 
-# Function to parse command line arguments
-def parse_arguments():
+def print_text(text):
+    print(str(text))
+
+def run_decomposition_pipeline(args):
+
+    print(f"Running the main pipeline")
+
+    # Step 1: Load data using internal workflow API
+    data = load_data(path_to_file=args.data_file)
     
-    parser = argparse.ArgumentParser(description="Run decomposition processes in parallel.")
+    # Step 2: Convert Namespace to dict for supplying parameters as required by the API
+    params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here
 
-    # Add arguments based on your provided list
-    parser.add_argument("--root_dir", type=str, required=True, help="Working folder")
-    parser.add_argument("--tag", type=str, required=True)
-    parser.add_argument("--threshold", type=float, required=True, help="Contact threshold")
-    parser.add_argument("--hardness", type=float, required=True, help="Contact threshold hardness", default=1)
-    parser.add_argument("--num_components", type=parse_num_components, default=[10],
-                        help="Number of components (single integer or a list of integers, e.g., 10 or 10,20,30)")
-    parser.add_argument("--max_iter", type=int, choices=range(10, 10001), metavar="[10-10000]",
-                        default=2000, help="Number of iterations (default=2000)")
-    parser.add_argument("--learning_method", type=str, choices=["batch", "online"], default="batch",
-                        help="Learning method (batch/online, default=batch)")
-    parser.add_argument("--batch_size", type=int, default=32,
-                        help="Batch size while using online learning (default=32), ignored for batch learning")
-    parser.add_argument("--num_jobs", type=int, default=1, help="Number of parallel jobs (default=1)")
-    parser.add_argument("--train_data_proportion", type=float, metavar="[0.1-1]", default=1,
-                        help="Training data proportion (default=1)")
-    parser.add_argument("--normalization_method", type=str, choices=[None, "MMSF", "R(s)"], default=None,
-                        help="Method to normalize pairwise distances - dataset needs to exist in the processed data")
-    parser.add_argument("--imputed", action="store_true", required=False)
-    # Parse arguments
-    return parser.parse_args()
+    # Step 3: Initialize run metadata and output directories
+    args_full = initialize(params=params,
+                           dir_results=args.results_base_dir,
+                           path_to_data=args.data_file,
+                           tag=getattr(args, "tag"),
+                           save_logs=getattr(args, "save_logs"))
+    
+    # Step 4: Prepare proximity vectors from trace data and save
+    data_prepped = prepare_proximity_data(data=data,
+                                          params=params,
+                                          dir_to_save=args_full["path_to_training"],
+                                          uid=args_full.get("uid", None))
+
+    # Step 5: Split into training and testing sets (if indicated in args)
+    data_train, data_test = split_proximity_data(data=data_prepped,
+                                                 train_data_proportion=params["train_data_proportion"],
+                                                 uid=args_full.get("uid", None))
+
+    # Step 7: Run LDA decomposition on the processed data
+    _ = decompose(params=params,
+                  data_train=data_train,
+                  data_test=data_test,
+                  dir_to_save=args_full["path_to_training"],
+                  summary=args_full,
+                  uid=args_full.get("uid", None))
+
 
 # Function to run the decompositions in parallel
 def main():
 
-    args = parse_arguments()
+    # Parse command-line arguments
+    args = parse_cli_arguments(parallelization=True)
+    num_jobs_total = args.num_jobs * len(args.num_components)
+    print(f"Total number of jobs: {num_jobs_total}")
 
-
-    start_time = time.time()
-
-    data_dir = os.path.join(args.root_dir, "processed/data")
-
-    # Ensure the data folder exists
-    if not os.path.isdir(data_dir):
-        print(f"Error: Data folder {data_dir} does not exist.")
-        return
-
-    file_to_process = os.path.join(data_dir, f"{args.tag}.h5")
-
-    """
-    # Start a Dask local cluster
-    n_jobs = args.num_jobs * len(args.num_components)
-    # cluster = LocalCluster(n_workers=n_jobs, threads_per_worker=1)
-    cluster = LocalCluster(n_workers=n_jobs, threads_per_worker=1, processes=True)
-    client = Client(cluster)
-    print(f"Actual number of workers: {len(client.scheduler_info()['workers'])}")
-
-    # Schedule parallel execution using Dask
-    futures = []
-    n_components = [item for item in args.num_components for _ in range(args.num_jobs)]
-    for index in range(n_jobs):
-        unique_id = uuid.uuid4()  # This will make each task unique
-        print(f" Spinning job {index} for {n_components[index]} components")
-        future = client.submit(
-            run_decomposition,
-            args.root_dir,
-            args.tag,
-            file_to_process,
-            n_components[index],
-            args.threshold,
-            args.hardness,
-            args.max_iter,
-            args.learning_method,
-            args.batch_size,
-            1,  # num_jobs fixed to one if running dask to avoid LDA from creating other processes
-            args.train_data_proportion,
-            unique_id,
-        )
-        futures.append(future)
-
-    # Collect results from Dask futures
-    for future in futures:
-        result = future.result()  # This will block until each computation is done
-        print(result)
-
-    print(f"> Finished collecting results from all workers!")
-    client.close()
-
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    print(f"Total elapsed time: {elapsed_time:.2f} seconds")
-    """
-    n_jobs = args.num_jobs * len(args.num_components)
-
-    with LocalCluster(n_workers=n_jobs, threads_per_worker=1, processes=True) as cluster:
+    start_time = time.perf_counter()
+    
+    with LocalCluster(n_workers=num_jobs_total, threads_per_worker=1, processes=True) as cluster:
+        
         with Client(cluster) as client:
-            print(f"Actual number of workers: {len(client.scheduler_info()['workers'])}")
+            
+            # time.sleep(1)
+            # print(client.scheduler_info()["workers"])
+            print(f"[DASK] Actual number of workers: {len(client.scheduler_info()["workers"])}")
 
             futures = []
-            n_components = [item for item in args.num_components for _ in range(args.num_jobs)]
-            for index in range(n_jobs):
-                unique_id = uuid.uuid4()
-                print(f" Spinning job {index} for {n_components[index]} components")
+            n_comps = [item for item in args.num_components for _ in range(args.num_jobs)]
+            for index in range(num_jobs_total):
+                # Modify args to reflect single job parameters
+                args_filt = deepcopy(vars(args))
+                args_filt["num_components"] = n_comps[index]
+                del args_filt["num_jobs"]
+                args_filt = argparse.Namespace(**args_filt)
+                # Submitting jobs to run in parallel
+                print(f"  [DASK] Spinning job {index:02} for {n_comps[index]} components")
                 future = client.submit(
-                    run_decomposition,
-                    args.root_dir,
-                    args.tag,
-                    file_to_process,
-                    n_components[index],
-                    args.normalization_method,
-                    args.imputed,
-                    args.threshold,
-                    args.hardness,
-                    args.max_iter,
-                    args.learning_method,
-                    args.batch_size,
-                    1,
-                    args.train_data_proportion,
-                    unique_id,
+                    run_decomposition_pipeline,
+                    args_filt
                 )
                 futures.append(future)
+            print(client.run(lambda: "I'm alive!"))
 
-            # This will either return or raise; it won't silently hang
-            results = client.gather(futures)
-            for r in results:
-                print(r)
+            # # This will either return or raise; it won't silently hang
+            # results = client.gather(futures)
+            # for rs in results:
+            #     if rs is not None:
+            #         print(rs)
 
-            print("> Finished collecting results from all workers!")
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    print(result)
+                except Exception as e:
+                    print(f"[ERROR] Task failed: {e}")
 
-    end_time = time.time()
+            print("[DASK] Finished collecting results from all workers!")
+
+    end_time = time.perf_counter()
     print(f"Total elapsed time: {end_time - start_time:.2f} seconds")
 
 if __name__ == "__main__":

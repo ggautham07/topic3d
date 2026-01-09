@@ -33,7 +33,6 @@ Dependencies:
 from topic3d.workflow._parsers import parse_cli_arguments
 from topic3d.workflow._dataops import load_data, prepare_proximity_data, split_proximity_data
 from topic3d.workflow.training import initialize, decompose
-import logging
 
 
 def main():
