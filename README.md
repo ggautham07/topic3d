@@ -30,7 +30,7 @@ The package is currently in private development and **must be installed from sou
 ```bash
 git clone https://github.com/ggautham07/topic3d.git
 cd topic3d
-pip install -e .
+pip install .
 ```
 
 Dependencies include:  
@@ -101,21 +101,38 @@ embedding_df = res.embed_decomposition(
 ## Project Structure
 
 ```
-topic3d/
-│
-├── datatypes/             # CoordsArrayStack and PWDistArrayStack classes
-├── handlers/              # RawData, ProcessedData, DecompositionResult
-├── visualization/         # Plotting utilities for traces and matrices
-├── models/                # (Optional) Topic modeling and decomposition pipeline
-└── tests/                 # Unit tests
+┣ 📂data
+┣ 📂examples
+┣ 📂src
+┃ ┣ 📂routines
+┃ ┃ ┣ 📜cli.py
+┃ ┃ ┣ 📜run_dask.py
+┃ ┃ ┗ 📜run.py
+┃ ┣ 📂topic3d
+┃ ┃ ┣ 📂workflow
+┃ ┃ ┃ ┣ 📜_dataops.py
+┃ ┃ ┃ ┣ 📜_logging.py
+┃ ┃ ┃ ┣ 📜_parsers.py
+┃ ┃ ┃ ┗ 📜training.py
+┃ ┃ ┣ 📜__init__.py
+┃ ┃ ┣ 📜_helper.py
+┃ ┃ ┣ 📜datamgrs.py
+┃ ┃ ┣ 📜datatypes.py
+┃ ┃ ┣ 📜handlers.py
+┃ ┃ ┣ 📜postprocessing.py
+┃ ┃ ┗ 📜visualization.py
+┣ 📂tests
+┣ 📜.gitignore
+┣ 📜pyproject.toml
+┗ 📜README.md
 ```
 
 ---
 
 ## Authors
 
-- Jean-Bernard Fiche ([jbfiche](https://github.com/jbfiche))  
 - Gautham Ganesh ([ggautham07](https://github.com/ggautham07))  
+- Jean-Bernard Fiche ([jbfiche](https://github.com/jbfiche))  
 - Marcelo Nollmann ([marcnol](https://github.com/marcnol))
 
 ---

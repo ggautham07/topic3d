@@ -709,9 +709,22 @@ class PWDistArrayStack(np.ndarray):
         return idxs, out
 
 
-    # # TODO for normalization of pairwise distances from JB's code, available in format_FOF_data.py
-    # def normalize(self):
-    #     return
+    # TODO for normalization of pairwise distances from JB's code, available in format_FOF_data.py
+    def normalize(self, ref: np.ndarray, method: str = "MMSF") -> PWDistArrayStack:
+        """
+        Normalize the stack by different methods while comparing to a reference dataset
+
+        MMSF: median-median scaling factor
+
+        JB's method based on R(s) yet to be implemented here
+        """
+    
+        method = method.strip().upper()
+
+        if method == "MMSF":
+            scaling_factor = np.nanmedian(ref) / np.nanmedian(self)
+
+            return self[:] * scaling_factor
 
 
     def split_random(self, proportion: Number = 0.5, return_idxs_only=True):
@@ -986,7 +999,7 @@ class PWDistArrayStack(np.ndarray):
         idxs = random_gen.integers(self.num_items, size=num_items)
         
         fig = map_form_fn[form](items=self.proximity(threshold, hardness)[idxs, ...],
-                                titles=[f"Index  {i:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}" for i in idxs],
+                                titles=[f"Idx {i:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}" for i in idxs],
                                 cmap=cmap,
                                 cbar_label="proximity",
                                 include_cbar=include_cbar)

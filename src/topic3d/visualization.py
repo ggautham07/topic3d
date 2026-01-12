@@ -30,7 +30,7 @@ from collections import Counter
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
-from . import helper as hp
+from . import _helper as hp
 
 
 # Setting global matplotlib parameters
@@ -426,14 +426,14 @@ def _add_gene_legend(ax, loci_dict, location='outside', anchor=(1.05, 1), fontsi
 
 
 # TODO add gridlines possibility. With automatically picked color or supplied using kwargs?
-def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines: bool = False):
+def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines: bool = False, **kwargs):
     """Helper that draws a matrix as a rotated lower triangle heatmap on an existing matplotlib Axes object."""
 
     num_bins = matrix.shape[0]
     mask = np.triu(np.ones_like(matrix, dtype=bool))
     matrix_masked = np.ma.masked_array(matrix, mask=~mask)
 
-    im = ax.imshow(matrix_masked, origin="lower", cmap=cmap, interpolation="none")
+    im = ax.imshow(matrix_masked, origin="lower", cmap=cmap, interpolation="none", **kwargs)
     # rotate ‑45° so that the matrix diagonal becomes the base of a triangle
     trans = transforms.Affine2D().rotate_deg(-45).scale(1/ math.sqrt(2), -1/ math.sqrt(2)) + ax.transData
     im.set_transform(trans)
@@ -469,7 +469,7 @@ def _draw_2d_tri_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines
 
 # NOTE do not change values of to axis sizes, limits and font sizes, they are optimized to fit nicely
 def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None,
-                           cmap="Reds", include_cbar=True, cbar_label="") -> Figure:
+                           cmap="Reds", include_cbar=True, cbar_label="", **kwargs) -> Figure:
     """
     Plot a grid of matrices in triangular form with a colorbar
     
@@ -516,12 +516,15 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None,
         
         # Values computed to be used in colorbar
         if include_cbar:
-            min_val = np.nanmin(data_masked)
-            max_val = np.nanmax(data_masked)
+            min_val = kwargs.get("cbar_vmin", np.nanmin(data_masked))
+            max_val = kwargs.get("cbar_vmax", np.nanmax(data_masked))
             mid_val = (max_val + min_val) / 2
         
         # Drawing the map, creating space for the colorbar and drawing that as well
-        im = _draw_2d_tri_map(mat, ax=ax, cmap=cmap)    # using internal routine
+        if include_cbar:
+            im = _draw_2d_tri_map(mat, ax=ax, cmap=cmap, vmin=min_val, vmax=max_val)    # using internal routine
+        else:
+            im = _draw_2d_tri_map(mat, ax=ax, cmap=cmap,)
         ticks_bc = np.arange(0, num_bc, 5)
         ax.set_xticks(ticks_bc)
         for tk in ticks_bc:
@@ -538,8 +541,8 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None,
             # cax = fig.add_axes([axpos.x0+0.01, axpos.y0+0.05, axpos.width, axpos.height * 0.075])
             cbar = fig.colorbar(mappable=im, ax=ax, pad=0.1 if flag_no_grid else 0.075, shrink=0.5, aspect=15)
             cbar.set_ticks(ticks=[min_val, mid_val, max_val],
-                        labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
-                        fontsize=8 if flag_no_grid else 9)
+                           labels=[f"{min_val:.2f}", f"{mid_val:.2f}", f"{max_val:.2f}"],
+                           fontsize=8 if flag_no_grid else 9)
             cbar.ax.set_ylabel(cbar_label, fontsize=10, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
             cbar.outline.set_visible(False)
             cbar.ax.yaxis.set_label_position("right")
@@ -704,7 +707,7 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
     # ------------------------------------------------------------------
     if enrich:
         txt_lines = [f"{et}: {OR:.{OR_DIGITS}f}" for et, OR in enrich]
-        ax.text(0.15, 0.45, "\n".join(txt_lines),
+        ax.text(0.01, 0.3, "\n".join(txt_lines),
                 transform=ax.transAxes,
                 ha="left", va="top", fontsize=font_info["tick_label"],   # - 3 (before)
                 bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="black", lw=0.7))

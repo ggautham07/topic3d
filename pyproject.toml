@@ -4,23 +4,39 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topic3d"
-version = "0.dev5"
+version = "0.dev8"
 description = "Topic decomposition of chromatin tracing data"
-requires-python = ">=3.13"
+authors = [
+  {name = "Gautham Ganesh"},
+  {name = "Jean-Bernard Fiche"},
+  {name = "Marcelo Nollmann", email = "marcelo.nollmann@cbs.cnrs.fr"},
+]
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
 dependencies = [
-    "numpy >= 1.21",
-    "scipy >= 1.0.0"
+    "numpy>=1.21",
+    "scipy>=1.0.0",
+    "pandas>=2.3.2",
+    "scikit-learn>=1.7.1",
+    "matplotlib>=3.10.5"
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "seaborn",
     "umap-learn",
-    "hdbscan"
+    "hdbscan",
+    "tqdm"
 ]
 
 [project.scripts]
-topic3d-run = "main:main"
+topic3d = "routines.cli:main"
+topic3d-run = "routines.run:main"
+topic3d-run-dask = "routines.run_dask:main"
+
+[project.urls]
+Repository = "https://github.com/ggautham07/topic3d.git"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
