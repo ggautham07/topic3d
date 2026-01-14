@@ -47,7 +47,7 @@ def initialize(params: dict, dir_results: str, path_to_data: str, tag: str = Non
     uid = str(uuid4())[:6]
     
     # TODO set folder pattern to highlight only most important parameters OR have a function to list and pull trainings
-    dir_pattern = f"{params["num_components"]:02d}-components_threshold={params["proximity_threshold"]}"
+    dir_pattern = f"{params['num_components']:02d}-components_threshold={params['proximity_threshold']}"
     dir_training = path.join(dir_results, tag, dir_pattern, f"{uid}")
     makedirs(dir_training, exist_ok=False)
 

@@ -127,7 +127,7 @@ def prepare_proximity_data(data: ProcessedData | dict | np.ndarray,
             pwds = _get_val(data, f"pwds_imputed_norm" if imputed else "pwds_norm", is_dict)
             if isinstance(pwds, dict):
                 pwds = pwds[params["pwd_normalization"]]
-            logging.info(f"[{uid}] Dataset normalized by {norm_method_mapping[params["pwd_normalization"]]} taken")
+            logging.info(f"[{uid}] Dataset normalized by {norm_method_mapping[params['pwd_normalization']]} taken")
         else:
             pwds = _get_val(data, "pwds_imputed" if imputed else "pwds", is_dict)
             logging.info(f"[{uid}] No normalization, raw dataset taken")
@@ -155,7 +155,7 @@ def prepare_proximity_data(data: ProcessedData | dict | np.ndarray,
 
     proximity = pwds_final.proximity(threshold=params["proximity_threshold"], hardness=params["proximity_hardness"])
     proximity_avg = np.nanmean(proximity, axis=0)
-    logging.info(f"[{uid}] Computed proximity stack with threshold {params["proximity_threshold"]} and hardness {params["proximity_hardness"]}")
+    logging.info(f"[{uid}] Computed proximity stack with threshold {params['proximity_threshold']} and hardness {params['proximity_hardness']}")
    
     if len(dir_to_save) > 0 and path.isdir(dir_to_save):
         logging.info(f"[{uid}] Plotting mean proximity matrix, type/shape: {type(proximity_avg)}/{proximity_avg.shape}")

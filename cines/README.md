@@ -1,112 +1,190 @@
-# Install and run topic decompositions in cines
+# Quick start guide for installing and running `topic3d` on Adastra
 
+Parts of this guide have been borrowed from Adastra's [official quick start guide](https://dci.dci-gitlab.cines.fr/webextranet/quick_start/index.html)
 
-## connection
+## Connection to the server
 
+After the username and password are made available, login with
 
-### setup SSH key
+```
+<username>@adastra.cines.fr
+```
 
-edit `~/.ssh/config`
+### Setup SSH key
+
+Edit `~/.ssh/config` on the computer being used to connect to Adastra
 
 ```
 Host adastra
   HostName adastra.cines.fr
-  User mnollmann
+  User <username>
   ControlMaster auto
   ControlPath ~/.ssh/cm-%r@%h:%p
   ControlPersist 10m
 ```
 
+And then connect using
+
 ```
 $ ssh adastra
 ```
 
-### copying data to CINES
+### Viewing project details
 
-rsync --progress -avh /mnt/grey/DATA/users/gautham/Workspace/topics/data/processed.tar.gz mnollmann@adastra.cines.fr:/work/CT3/c1916693/SHARED
+Many details pertaining to the project account on Adastra can be viewed using the `myproject` module. Some examples are given below, and more information is available in the [official documentation](https://dci.dci-gitlab.cines.fr/webextranet/user_support/index.html#login-unique)
 
-### modules
+`myproject --list (-l)`   --->  to list all associated projects
+`myproject --state (-s)`  --->  current status of the project, space and file usage, etc.
+`myproject --cines (-c)`  --->  list all CINES project directories
 
-#### load modules
+### Copying data to Adastra
 
-To start with we need to load the right environments:
+```bash
+rsync --progress -avh --ignore-existing <path_to_local_files> <username>@adastra.cines.fr:<path_to_copy_to_server>
+```
+
+More information is available [here](https://dci.dci-gitlab.cines.fr/webextranet/data_storage_and_transfers/index.html#data-transfer)
+
+
+## Setting up the environment
+
+### Load required modules
+
+Adastra uses modules that can be loaded when needed. The complete list of modules filtered by a search string (leave empty for no filtering) can be viewed by running
 
 ```
-ml python conda
+module spider <string>
 ```
 
+For topic decomposition, Python and Anaconda must be loaded.
 
-### conda installation
+```
+module load python anaconda3
+```
+
+And the list of currently loaded modules can be listed using
+
+```
+module list
+```
+
+More information about modules is available [here](https://dci.dci-gitlab.cines.fr/webextranet/user_support/index.html#module-why-and-how)
 
 
+### Installing the virtual environment
+
+This repository must first be cloned since it contains the required scripts and environment files.
 
 ```bash 
-cd Repositories
-git clone git@github.com:ggautham07/topic3d.git
+mkdir -m 755 $HOMEDIR/repositories
+git clone https://github.com/ggautham07/topic3d.git --branch cines
 cd topic3d
 ```
 
-Then run:
+The environment can then be installed in <path_to_env> (preferably in `$WORKDIR`) from the file `cines/chromtopic-nodask.yml`
+
 ```bash
-conda env create -f chromtopic-test.yml
-cd Repository/topics3d/
-conda activate chromtopic-test
+conda env create --prefix <path_to_env> --file cines/chromtopic-nodask.yml
+```
+
+> [!note] Possible incompatibility with Adastra's anaconda3 module
+> In some cases, installing the environment with a file fails due to reasons not well understood. In this case, a suitable environment can still be created  with the base Python packages and pip.
+
+```bash
+conda env create --prefix <path_to_env> python=3.13.5
+```
+
+To include the parent directory of <path_to_env> (for instance, if it is used to store conda environments) in the list of directories that conda surfs to prepare the list of environments, try
+
+```bash
+conda config --append envs_dirs <path_to_envs_folder>
+```
+
+This will ensure that the environment is usable and can be detected by conda.
+
+```bash
+conda info --envs
+``` 
+
+Load the environment.
+
+```bash
+conda activate chromtopic-nodask        # replace chromtopic-nodask with <path_to_env> if the environment was not listed in the previous step
+```
+
+Install `topic3d` in this environment using pip. In case a minimal environment was created earlier, `topic3d`'s dependencies should still be correctly installed. Ensure that the correct `pip` on the system is being used by running `which -a pip`.
+
+```bash
+cd $HOMEDIR/repositories/topics3d/
 pip install .
 ```
 
-### dataset
+Verify the installation using `conda list`.
 
-copied datasets to:
 
-`/work/CT3/c1916693/SHARED/data`
+## Running parallel topic decomposition(s)
 
-### test run
+### Dataset storage
 
-This is the command to run in a normal computer
+It is highly recommended to store datasets in `$SCRATCHDIR`. However, note that they are automatically cleared every thirty days.
+
+Datasets used now are being stored in `$SHAREDSCRATCHDIR/topics/data`, with some testing copies in `/lus/scratch/CT3/c1916693/gganesh` (i.e., Gautham's `$SCRATCHDIR`)
+
+### Batch script model
+
+This model in available in `topic3d/cines/example_run.sh`. It is used to run parallel topic decompositions for a specific dataset, for 8 different `num_components`, with 24 tasks each in parallel (hence totalling 192 trainings). The values given here are necessary for the full exclusive usage of a node with 192 computing units (hence, one CPU per training)
+
 ```
-/work/CT3/c1916693/SHARED/temp/launch.py --root_dir /work/CT3/c1916693/SHARED --tag takei2021SinglecellNuclearArchitecture_Mm-brain-chr17_wt --num_components 15 --num_jobs 1 --threshold 150 --hardness 1 --learning_method batch --max_iter 500
-```
-
-### sbatch
-
-
-```bash
 #!/bin/bash
 #SBATCH --account=c1916693
-#SBATCH --job-name="test_topic3d_takei_chr17"
+#SBATCH --job-name=<job_name>
 #SBATCH --constraint=GENOA
 #SBATCH --nodes=1
+#SBATCH --ntasks=192
+#SBATCH --ntasks-per-node=192
+#SBATCH --cpus-per-task=1
 #SBATCH --exclusive
-#SBATCH --time=00:20:00
+#SBATCH --time=04:00:00
+#SBATCH --output=/lus/home/CT3/c1916693/gganesh/slurm-outfiles/%j.out
+#SBATCH --error=/lus/home/CT3/c1916693/gganesh/slurm-outfiles/%j.out
+
+set -eu    # for error handling
 
 module purge
+module load python anaconda3
+conda activate chromtopic-nodask
 
-# activate environments
-module load cpe/24.07
-module load craype-x86-genoa
-module load PrgEnv-cray
-module load python conda
-conda activate chromtopic-test
+export MPLBACKEND=agg
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
 
-#export MPICH_GPU_SUPPORT_ENABLED=1
-#export OMP_NUM_THREADS=192  # or whatever --cpus-per-task you choose
-#export MKL_NUM_THREADS=192
+cmd=$HOMEDIR"/.local/bin/topic3d-run"
+data=$SCRATCHDIR"/topics/data/<filename.h5>"
+outdir=$SCRATCHDIR"/topics/training"
 
-cmd="/lus/home/CT3/c1916693/mnollmann/Repositories/topic3d/cines/code/launch.py"
-data="/scratch/CT3/c1916693/mnollmann/topics"
+echo "Host: "$(hostname)
+echo "Data file path: "${data}
+echo "Base output directory: "${outdir}
 
-echo 'Will run '$cmd' at '$data
+num_components=(5 10 15 20 25 30 35 40)
 
-srun --ntasks-per-node=1 --cpus-per-task=192 --threads-per-core=1 \
-    $cmd \
-    --root_dir $data \
-    --tag takei2021SinglecellNuclearArchitecture_Mm-brain-chr17_wt \
-    --num_components 15 \
-    --num_jobs 5 \
-    --threshold 150 \
-    --hardness 1 \
-    --learning_method batch \
-    --max_iter 500
+for nc in "${num_components[@]}";
+do
+    echo "Launching trainings with num_components="${nc}
+    srun --ntasks=24  ${cmd} \
+         --data_file ${data} \
+         --results_base_dir ${outdir} \
+         --save_logs \
+         --proximity_threshold 150 \
+         --min_efficiency 60 \
+         --num_components ${nc} \
+         --max_iter 1000 \
+        --train_data_proportion 1 &
+done
 
+wait
+
+echo "All operations completed."
 ```
 
+Scripts using job arrays for massive parallelization are being written and will be updated in future iterations.
