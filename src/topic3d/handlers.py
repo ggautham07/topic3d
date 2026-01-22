@@ -465,7 +465,7 @@ class DecompositionResult:
 
 
     # TODO add common_cbar in plotting
-    def plot_components(self, normalized: bool = True, ordered: bool = False, 
+    def plot_components(self, normalized: bool = False, ordered: bool = False, 
                         path_to_save: str = "", form: str = "triangle", cmap: str = "Reds", **kwargs):
         """
         Plot all component matrices as triangular or square heatmaps.
