@@ -2,6 +2,7 @@
 src/topic3d.egg-info/
 src/topic3d/__pycache__/
 tests/
-data/
+examples/data/
+examples/results/
 __pycache__/
 build/
