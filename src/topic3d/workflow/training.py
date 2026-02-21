@@ -32,7 +32,51 @@ def readable_duration(duration:Number):
 ##################################################################################################################
 
 
-def initialize(params: dict, dir_results: str, path_to_data: str, tag: str = None, save_logs=True):
+def initialize_simple(params: dict, dir_results: str, path_to_data: str | list):
+    """
+    Initialize the directory to train data and save results from topic3d-decompose
+    """
+
+    assert type(params) == dict
+    assert type(dir_results) == str
+    try:
+        assert path.isdir(dir_results)
+        save_flag = True
+    except AssertionError:
+        print("Directory to save results not specified or found. Results and logs will not be saved.")
+        save_flag = False
+
+    # Setting a unique ID for the training
+    uid = str(uuid4())[:6]
+    
+    if save_flag:
+        dir_training = path.join(dir_results, uid)
+        makedirs(dir_training, exist_ok=False)
+        log_file = path.join(dir_training, f"logs.log")    # Setup the log file path (in the same folder as training)
+        setup_log(log_file)     # Setup logging to file and console
+    else:
+        setup_log_simple()
+    
+    logging.info("-" * 50)
+    logging.info(f"[{uid}] Will save trainings to: {dir_training}")
+
+    summary = params.copy()
+    summary.update({"uid": uid,
+                    "path_to_data": path_to_data,})
+    if save_flag:
+        summary.update({"path_to_training": dir_training,
+                        "path_to_log": log_file,})
+
+    logging.info(f"Settings summary for run: {uid}")
+    for key in summary.keys():
+        logging.info(f"    {key}: {summary[key]}")
+    if save_flag:
+        json.dump(summary, open(path.join(dir_training, "summary.json"), mode="x"), indent=4)
+
+    return summary
+
+
+def initialize_full(params: dict, dir_results: str, path_to_data: str, tag: str = None, save_logs=True):
     """
     Initialize the directory to train data and save results
     """

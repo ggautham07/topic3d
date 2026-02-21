@@ -16,8 +16,8 @@ def parse_num_components(value):
         raise argparse.ArgumentTypeError(f"Invalid value supplied for `num_components`: {value}")
 
 
-# Main function for parsing arguments
-def parse_cli_arguments(parallelization=False):
+# Main function for parsing arguments for topic3d-run and topic3d-run-dask
+def parse_cli_arguments_full(parallelization=False):
     """
     Parse command-line arguments for topic decomposition using topic3d.
 
@@ -164,6 +164,83 @@ def parse_cli_arguments(parallelization=False):
                             required=False,
                             help="Number of parallel jobs (default=1)",
                             default=1)
+
+    # Parse and return arguments
+    return parser.parse_args()
+
+
+# Main function for parsing arguments for topic3d-decompose
+def parse_cli_arguments_simple():
+    """
+    Parse minimal command-line arguments for topic decomposition using topic3d-decompose.
+
+    Returns
+    -------
+    argparse.Namespace
+        Parsed command-line arguments as a namespace.
+    """
+    
+    parser = argparse.ArgumentParser(description="Decompose a single-cell proximity dataset")
+
+    # ========================
+    # I/O PARAMETERS
+    # ========================
+    
+    parser.add_argument("--data_train_file",
+                        type=str,
+                        required=True,
+                        help="Path to the training data. Must be a Numpy file")
+    
+    parser.add_argument("--data_test_file",
+                        type=str,
+                        required=False,
+                        help="Path to the training data. Must be a Numpy file",
+                        default=None)
+
+    parser.add_argument("--results_dir",
+                        type=str,
+                        required=False,
+                        help="Directory in which to store decomposition results",
+                        default="")
+    
+    # ========================
+    # MODEL PARAMETERS
+    # ========================
+    # TODO add argument to read LDA parameters from a JSON file in which case the arguments below are ignored
+
+    parser.add_argument("--num_components",
+                        type=int,
+                        required=True,
+                        help="Number of components (single integer)",
+                        metavar="[2-100]",
+                        choices=range(2, 101))
+    
+    parser.add_argument("--max_iter",
+                        type=int,
+                        required=False,
+                        help="Maximum number of training iterations (default=1000)",
+                        metavar="[1-5000]",
+                        choices=range(1, 5001),
+                        default=1000)
+    
+    parser.add_argument("--learning_method",
+                        type=str,
+                        required=False,
+                        help="Model learning method: 'batch' (default) or 'online'",
+                        choices=["batch", "online"],
+                        default="batch")
+    
+    parser.add_argument("--batch_size",
+                        type=int,
+                        required=False,
+                        help="Batch size while using online learning, ignored for batch learning (default=32)",
+                        default=64)
+    
+    parser.add_argument("--random_state",
+                        type=int,
+                        required=False,
+                        help="Set random seed for reproducible model training (default=None)",
+                        default=None)
 
     # Parse and return arguments
     return parser.parse_args()

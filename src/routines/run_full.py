@@ -30,16 +30,16 @@ Dependencies:
 """
 
 
-from topic3d.workflow._parsers import parse_cli_arguments
+from topic3d.workflow._parsers import parse_cli_arguments_full
 from topic3d.workflow._dataops import load_data, prepare_proximity_data, split_proximity_data
-from topic3d.workflow.training import initialize, decompose
+from topic3d.workflow.training import initialize_full, decompose
 
 
 def main():
     """Execute the topic decomposition pipeline based on CLI arguments."""
 
     # Step 1: Parse command-line arguments
-    args = parse_cli_arguments()
+    args = parse_cli_arguments_full()
 
     # Step 2: Convert Namespace to dict for supplying parameters as required by the API
     params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here
@@ -48,7 +48,7 @@ def main():
     data = load_data(path_to_file=args.data_file)
 
     # Step 4: Initialize run metadata and output directories
-    args_full = initialize(params=params,
+    args_full = initialize_full(params=params,
                            dir_results=args.results_base_dir,
                            path_to_data=args.data_file,
                            tag=getattr(args, "tag"),

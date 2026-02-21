@@ -76,8 +76,9 @@ def load_data(path_to_file) -> (np.ndarray | ProcessedData | dict):
         try:
             squareform(data[0])
         except ValueError:
-            logging.error("Loaded data is a not a true PWD stack")
+            logging.error("Loaded data is a not a true pairwise array stack")
             raise
+        return data
     
     try:
         dataobj = ProcessedData()

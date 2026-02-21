@@ -45,9 +45,9 @@ from dask.distributed import Client, LocalCluster
 from distributed import as_completed
 # from concurrent.futures import ProcessPoolExecutor
 
-from topic3d.workflow._parsers import parse_cli_arguments
+from topic3d.workflow._parsers import parse_cli_arguments_full
 from topic3d.workflow._dataops import load_data, prepare_proximity_data, split_proximity_data
-from topic3d.workflow.training import initialize, decompose
+from topic3d.workflow.training import initialize_full, decompose
 
 config.set({'distributed.worker.daemon': False})
 
@@ -66,7 +66,7 @@ def run_decomposition_pipeline(args):
     params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here
 
     # Step 3: Initialize run metadata and output directories
-    args_full = initialize(params=params,
+    args_full = initialize_full(params=params,
                            dir_results=args.results_base_dir,
                            path_to_data=args.data_file,
                            tag=getattr(args, "tag"),
@@ -96,7 +96,7 @@ def run_decomposition_pipeline(args):
 def main():
 
     # Parse command-line arguments
-    args = parse_cli_arguments(parallelization=True)
+    args = parse_cli_arguments_full(parallelization=True)
     num_jobs_total = args.num_jobs * len(args.num_components)
     print(f"Total number of jobs: {num_jobs_total}")
 
