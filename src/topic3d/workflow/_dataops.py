@@ -1,5 +1,6 @@
 from os import path
 from glob import glob
+import joblib as jl
 
 import logging
 
@@ -89,6 +90,20 @@ def load_data(path_to_file) -> (np.ndarray | ProcessedData | dict):
             dataobj.update({x:y[:] for x, y in handler.attrs.items()})
 
     return dataobj
+
+
+def load_model_file(path_to_file: str):
+    """
+    Load a model from a joblib file
+    
+    Python3 version compatibility is generally important for the model to be loaded correctly.
+
+    See `joblib.load` notes for more information.
+    """
+
+    assert path.isfile(path_to_file)
+
+    return jl.load(path_to_file)
 
 
 # TODO update normalisation and imputed parts of code from branch cines - cines/code/perform_decomposition.py

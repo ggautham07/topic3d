@@ -436,12 +436,11 @@ class DecompositionResult:
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        pw_divergence = pdist(self.components, metric=metric)
+        pw_divergence = squareform(pdist(self.components, metric=metric))
 
         if wflag:
             import matplotlib.pyplot as plt
             assert path_to_save.endswith((".svg", ".png"))
-            pw_divergence = squareform(pw_divergence)
             fig, ax = plt.subplots()
             fig.set_figwidth(10)
             fig.set_figheight(8)
@@ -519,6 +518,7 @@ class DecompositionResult:
         return fig
 
 
+    # TODO correct ordering on both axes
     def plot_decomposition(self, ordered: bool = True,
                            path_to_save: str = "", cmap: str = "Blues"):
         """

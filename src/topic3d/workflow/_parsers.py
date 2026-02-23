@@ -188,13 +188,20 @@ def parse_cli_arguments_simple():
     
     parser.add_argument("--data_train_file",
                         type=str,
-                        required=True,
-                        help="Path to the training data. Must be a Numpy file")
+                        required=False,
+                        help="Path to the training data. Must be a Numpy file",
+                        default=None)
     
     parser.add_argument("--data_test_file",
                         type=str,
                         required=False,
                         help="Path to the training data. Must be a Numpy file",
+                        default=None)
+    
+    parser.add_argument("--model_file",
+                        type=str,
+                        required=False,
+                        help="Path to an existing joblib model file. Must be compatible with Python3 version",
                         default=None)
 
     parser.add_argument("--results_dir",

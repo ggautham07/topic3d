@@ -579,7 +579,7 @@ def _draw_2d_sq_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines:
 
 # TODO include plots for a common colorbar case
 def plot_matrices_square(items: Iterable, titles: Iterable[str] = None,
-                         cmap="Reds", cbar_label=""):
+                         cmap="Reds", include_cbar=True, cbar_label=""):
     """
     Plot a tightly-spaced grid of matrices with or without a common colorbar in a square form.
 
@@ -606,8 +606,8 @@ def plot_matrices_square(items: Iterable, titles: Iterable[str] = None,
 
     num_rows, num_cols = _get_grid_num_rows_cols(len(items))
     fig, axs = plt.subplots(nrows=num_rows, ncols=num_cols,
-                            figsize=(num_cols*5, num_rows*4),
-                            layout="none",
+                            figsize=(num_cols*5.5 if include_cbar else num_cols*4.5, num_rows*5),
+                            layout="none" if include_cbar else "tight",
                             dpi=300)
     # if common_cbar:
         # fig.subplots_adjust(bottom=0.8)
@@ -615,6 +615,7 @@ def plot_matrices_square(items: Iterable, titles: Iterable[str] = None,
 
     for ax, itm, ttl in zip(axs.flat if num_rows * num_cols > 1 else [axs], items, titles):
         
+        itm = np.asarray(itm, dtype=float)
         if itm.ndim == 1:
             mat = squareform(itm)
             np.fill_diagonal(mat, np.nan)
@@ -636,14 +637,15 @@ def plot_matrices_square(items: Iterable, titles: Iterable[str] = None,
         ax.set_xticklabels(ticks_bc, fontsize=8 if flag_no_grid else 9, fontweight="bold", color="black")
         ax.set_yticklabels(ticks_bc, fontsize=8 if flag_no_grid else 9, fontweight="bold", color="black")
 
-        cbar = fig.colorbar(mappable=im, ax=ax, pad=0.175 if flag_no_grid else 0.225, shrink=0.5, aspect=15)
-        cbar.set_ticks(ticks=[min_val, mid_val, max_val],
-                       labels=[f"{min_val:.1f}", f"{mid_val:.1f}", f"{max_val:.1f}"],
-                       fontsize=9 if flag_no_grid else 11)
-        cbar.ax.set_ylabel(cbar_label, fontsize=11 if flag_no_grid else 12, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
-        cbar.outline.set_visible(False)
-        cbar.ax.yaxis.set_label_position("right")
-        cbar.ax.yaxis.set_ticks_position("left")
+        if include_cbar:
+            cbar = fig.colorbar(mappable=im, ax=ax, pad=0.175 if flag_no_grid else 0.225, shrink=0.5, aspect=15)
+            cbar.set_ticks(ticks=[min_val, mid_val, max_val],
+                        labels=[f"{min_val:.1f}", f"{mid_val:.1f}", f"{max_val:.1f}"],
+                        fontsize=9 if flag_no_grid else 11)
+            cbar.ax.set_ylabel(cbar_label, fontsize=11 if flag_no_grid else 12, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
+            cbar.outline.set_visible(False)
+            cbar.ax.yaxis.set_label_position("right")
+            cbar.ax.yaxis.set_ticks_position("left")
         
         # Setting the title/text for the map
         ax.set_title(ttl, fontsize=10 if flag_no_grid else 13, loc="center", y=1.025)

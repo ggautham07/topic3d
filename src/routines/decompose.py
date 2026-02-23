@@ -23,7 +23,7 @@ Dependencies:
 
 
 from topic3d.workflow._parsers import parse_cli_arguments_simple
-from topic3d.workflow._dataops import load_data
+from topic3d.workflow._dataops import load_data, load_model_file
 from topic3d.workflow.training import initialize_simple, decompose
 
 
@@ -36,12 +36,10 @@ def main():
     # Step 2: Convert Namespace to dict for supplying parameters as required by the API
     params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here
 
-    # Step 3: Load data using internal workflow API
-    data_train = load_data(path_to_file=args.data_train_file)
-    if args.data_test_file is None:
-        data_test = None
-    else:
-        data_test = load_data(path_to_file=args.data_train_file)
+    # Step 3: Load data and using internal workflow API
+    data_train = None if args.data_train_file is None else load_data(path_to_file=args.data_train_file)
+    data_test = None if args.data_test_file is None else load_data(path_to_file=args.data_test_file)
+    existing_model = None if args.model_file is None else load_model_file(args.model_file)
 
     # Step 4: Initialize run metadata and output directories if needed
     args_full = initialize_simple(params=params,
@@ -52,6 +50,7 @@ def main():
     _ = decompose(params=params,
                   data_train=data_train,
                   data_test=data_test,
+                  model=existing_model,
                   dir_to_save=args_full["path_to_training"],
                   summary=args_full,
                   uid=args_full.get("uid", None))

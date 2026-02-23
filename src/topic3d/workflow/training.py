@@ -121,7 +121,8 @@ def initialize_full(params: dict, dir_results: str, path_to_data: str, tag: str 
 
 
 def decompose(params: dict,
-              data_train: np.ndarray, data_test: np.ndarray = None,
+              data_train: np.ndarray = None, data_test: np.ndarray = None,
+              model: LatentDirichletAllocation = None,
               dir_to_save: str = "",
               **kwargs):
     """
@@ -131,13 +132,26 @@ def decompose(params: dict,
     """
     
     assert isinstance(params, dict)
-    assert isinstance(data_train, np.ndarray) and data_train.ndim == 2
-    flag_ft = True      # Train and test data same if True - performs model.fit_transform()
-    if data_test is not None:
-        flag_ft = False
+    assert (not data_train is None) or (not data_test is None)
+    if not (data_train is None):
+        assert isinstance(data_train, np.ndarray) and data_train.ndim == 2
+        dim = int(np.ceil(np.sqrt(data_train.shape[-1] * 2)))
+        assert dim * (dim-1) == data_train.shape[-1] * 2  # ensure that vector can be squareformed
+        flag_train = True
+    else:
+        flag_train = False
+    if not (data_test is None):
         assert isinstance(data_test, np.ndarray) and data_test.ndim == 2
-    dim = int(np.ceil(np.sqrt(data_train.shape[-1] * 2)))
-    assert dim * (dim-1) == data_train.shape[-1] * 2  # ensure that vector can be squareformed
+        dim = int(np.ceil(np.sqrt(data_test.shape[-1] * 2)))
+        assert dim * (dim-1) == data_test.shape[-1] * 2  # ensure that vector can be squareformed
+        flag_test = True
+    else:
+        flag_test = False
+    if not (model is None):
+        assert isinstance(model, LatentDirichletAllocation)
+        flag_exising_model = True
+    else:
+        flag_exising_model = False
     assert isinstance(dir_to_save, str)
     wflag = False
     if len(dir_to_save) > 0:
@@ -148,27 +162,53 @@ def decompose(params: dict,
     if uid is None:
         uid = "no-uid"
 
+    if flag_exising_model:
+        logging.info("Using existing LDA model loaded from the given path")
+    else:
+        logging.info("No existing model supplied. New LDA model will be created")
+
+    if flag_train:
+        logging.info("Training data OK")
+    else:
+        logging.info("Improper or no training data supplied")
+
+    if flag_test:
+        logging.info("Testing data OK")
+    else:
+        logging.info("Improper or no testing data supplied")
+
     # instantiate the LDA model
     logging.info(f"[{uid}] Getting training ready in {dir_to_save}")
-    try:
-        model = LatentDirichletAllocation(n_components=params["num_components"],
-                                          max_iter=params["max_iter"],
-                                          learning_method=params["learning_method"],
-                                          batch_size=params["batch_size"],
-                                          random_state=params["random_state"])
-    except Exception as err:
-        logging.error(f"[{uid}] Error occurred during LDA instantiation: {str(err)}")
-        raise
+    if not flag_exising_model:
+        try:
+            model = LatentDirichletAllocation(n_components=params["num_components"],
+                                            max_iter=params["max_iter"],
+                                            learning_method=params["learning_method"],
+                                            batch_size=params["batch_size"],
+                                            random_state=params["random_state"])
+        except Exception as err:
+            logging.error(f"[{uid}] Error occurred during LDA instantiation: {str(err)}")
+            raise
 
     # performing the training and transformation of data to get results
     try:
-        logging.info(f"[{uid}] Starting training...")
+        if flag_train:
+            logging.info(f"[{uid}] Training LDA model...")
+        else:
+            logging.info(f"[{uid}] Decomposing data based on existing LDA model...")
         time_start = perf_counter()
-        if flag_ft:
+        if flag_train and (not flag_test):
             decomposition = model.fit_transform(data_train)
+            model_score = model.score(data_train)
+        elif (not flag_train) and flag_test:
+            decomposition = model.transform(data_test)
+            model_score = model.score(data_test)
+            model_perp_on_data = model.perplexity(data_test)
         else:
             model = model.fit(data_train)
             decomposition = model.transform(data_test)
+            model_score = model.score(data_test)
+            model_perp_on_data = model.perplexity(data_test)
         logging.info(f"[{uid}] Training finished successfully")
     except Exception as err:
         logging.error(f"[{uid}] Error occurred during training: {str(err)}")
@@ -178,10 +218,14 @@ def decompose(params: dict,
                                       decomposition=decomposition,
                                       params=params)
         summary = kwargs.get("summary", params)
-        summary.update({"model_num_iterations": model.n_iter_,
-                        "model_score": model.score(data_train if flag_ft else data_test),
+        summary.update({"training_performed": flag_train,
+                        "testing_performed": flag_test,
+                        "model_num_iterations": model.n_iter_,
+                        "model_score": model_score,
                         "model_perplexity": model.bound_,
                         })
+        if flag_test:
+            summary["model_perplexity_on_test_data"] = model_perp_on_data
         if wflag:
             results.save(dir_to_save=dir_to_save)
             results.plot_components(ordered=False, path_to_save=path.join(dir_to_save, "components.png"))
@@ -194,31 +238,32 @@ def decompose(params: dict,
         logging.error(f"[{uid}] Error occurred during the compiling and saving of results: {str(err)}")
         raise
 
-    logging.info(f"[{uid}] Starting coherence computations for the trained model using training data")
-    try:
-        prop_top_pixels_all = [0.5, 1, 1.5, 2, 2.5, 3]   # NOTE, in percentage
-        for prop_top_pixels in prop_top_pixels_all:
-            num_top_pixels = int((prop_top_pixels / 100) * results.components.shape[1])
-            if num_top_pixels < 3:
-                prop_top_pixels_all.append(np.max(prop_top_pixels_all)+0.5)
-                continue
-            logging.info(f"[{uid}] Taking {num_top_pixels} top pixels...")
-            c_umass = results._compute_coherence_umass(components=results.components,
-                                                        data_used=data_train,
-                                                        num_top_pixels=num_top_pixels,
-                                                        randomize_data=False)
-            c_npmi, c_cos = results._compute_coherence_npmi_cos(components=results.components,
-                                                                data_used=data_train,
-                                                                num_top_pixels=num_top_pixels,
-                                                                randomize_data=False)
-        with h5py.File(path.join(dir_to_save, "results.h5"), "r+") as handler:
-            handler.create_dataset(f"coherence/umass/{prop_top_pixels}", data=c_umass)
-            handler.create_dataset(f"coherence/cos/{prop_top_pixels}", data=c_cos)
-            handler.create_dataset(f"coherence/npmi/{prop_top_pixels}", data=c_npmi)
-    except Exception as err:
-        logging.error(f"[{uid}] Error occurred during coherence computation: {str(err)}")
-        raise
-    logging.info(f"[{uid}] Finished coherence computations for the trained model")
+    if flag_train:
+        logging.info(f"[{uid}] Starting coherence computations for the trained model using training data")
+        try:
+            prop_top_pixels_all = [2.5, 5, 7.5, 10]   # NOTE, in percentage
+            for prop_top_pixels in prop_top_pixels_all:
+                num_top_pixels = int((prop_top_pixels / 100) * results.components.shape[1])
+                if num_top_pixels < 3:
+                    prop_top_pixels_all.append(np.max(prop_top_pixels_all)+2.5)
+                    continue
+                logging.info(f"[{uid}] Taking {num_top_pixels} top pixels...")
+                c_umass = results._compute_coherence_umass(components=results.components,
+                                                            data_used=data_train,
+                                                            num_top_pixels=num_top_pixels,
+                                                            randomize_data=False)
+                c_npmi, c_cos = results._compute_coherence_npmi_cos(components=results.components,
+                                                                    data_used=data_train,
+                                                                    num_top_pixels=num_top_pixels,
+                                                                    randomize_data=False)
+                with h5py.File(path.join(dir_to_save, "results.h5"), "r+") as handler:
+                    handler.create_dataset(f"coherence/umass/{prop_top_pixels}", data=c_umass)
+                    handler.create_dataset(f"coherence/cos/{prop_top_pixels}", data=c_cos)
+                    handler.create_dataset(f"coherence/npmi/{prop_top_pixels}", data=c_npmi)
+        except Exception as err:
+            logging.error(f"[{uid}] Error occurred during coherence computation: {str(err)}")
+            raise
+        logging.info(f"[{uid}] Finished coherence computations for the trained model")
 
     time_elapsed = readable_duration(perf_counter() - time_start)
     logging.info(f"[{uid}] Completed in {time_elapsed}")
