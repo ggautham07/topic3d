@@ -23,7 +23,7 @@ Dependencies:
 
 
 from topic3d.workflow._parsers import parse_cli_arguments_simple
-from topic3d.workflow._dataops import load_data, load_model_file
+from topic3d.workflow._dataops import load_data_file, load_model_file
 from topic3d.workflow.training import initialize_simple, decompose
 
 
@@ -37,8 +37,8 @@ def main():
     params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here
 
     # Step 3: Load data and using internal workflow API
-    data_train = None if args.data_train_file is None else load_data(path_to_file=args.data_train_file)
-    data_test = None if args.data_test_file is None else load_data(path_to_file=args.data_test_file)
+    data_train = None if args.data_train_file is None else load_data_file(path_to_file=args.data_train_file)
+    data_test = None if args.data_test_file is None else load_data_file(path_to_file=args.data_test_file)
     existing_model = None if args.model_file is None else load_model_file(args.model_file)
 
     # Step 4: Initialize run metadata and output directories if needed

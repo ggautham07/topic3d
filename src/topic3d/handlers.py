@@ -600,6 +600,7 @@ class DecompositionResult:
         assert isinstance(method, str)
         assert isinstance(cluster, bool)
 
+        from scipy.spatial.distance import squareform, pdist
         import matplotlib.pyplot as plt
         import seaborn as sns
 
@@ -622,7 +623,7 @@ class DecompositionResult:
                 num_neighbors_embedding = kwargs["num_neighbors"]
                 min_dist_embedding = kwargs["min_dist"]
                 assert isinstance(num_neighbors_embedding, int)
-                assert isinstance(min_dist_embedding, float)
+                assert isinstance(min_dist_embedding, Number)
             except KeyError:
                 print(f"Parameter values for {method} not found, supply using a dictionary")
                 raise
@@ -630,14 +631,24 @@ class DecompositionResult:
                 print("Parameter values not suitable")
                 raise
             # UMAP model training and data embedding
-            reducer = UMAP(
-                n_neighbors=num_neighbors_embedding,
-                min_dist=min_dist_embedding,
-                metric=metric,
-                n_components=num_components_embedding,
-                random_state=42,
-            )
-            embedding = reducer.fit_transform(self.decomposition)
+            try:
+                reducer = UMAP(
+                    n_neighbors=num_neighbors_embedding,
+                    min_dist=min_dist_embedding,
+                    metric=metric,
+                    n_components=num_components_embedding,
+                    random_state=42,
+                )
+                embedding = reducer.fit_transform(self.decomposition)
+            except ValueError:
+                reducer = UMAP(
+                    n_neighbors=num_neighbors_embedding,
+                    min_dist=min_dist_embedding,
+                    metric="precomputed",
+                    n_components=num_components_embedding,
+                    random_state=42,
+                )
+                embedding = reducer.fit_transform(squareform(pdist(self.decomposition, metric=metric)))
 
         elif method == "pca":
             reducer = PCA(n_components=2, random_state=42)
@@ -671,13 +682,11 @@ class DecompositionResult:
         
         if cluster:
 
-            import hdbscan
-
             # HDBSCAN parameters for the pooled components
             min_cluster_size = kwargs.get("min_cluster_size", self.decomposition.shape[0] // 40)
             min_samples = kwargs.get("min_samples", 1)
             cluster_selection_method = kwargs.get("cluster_selection_method", "eom")
-            alpha = kwargs.get(alpha, 1.0)
+            alpha = kwargs.get("alpha", 1.0)
             
             clusterer = HDBSCAN(
                 min_cluster_size=min_cluster_size,
@@ -723,7 +732,7 @@ class DecompositionResult:
             # Annotate cluster numbers
             centroids = embedding_clusters_df.groupby("cluster")[[f"{method_label}_1", f"{method_label}_2"]].mean()
             for cluster_id, row in centroids.iterrows():
-                plt.text(row[f"{method_label}_1"]+1, row[f"{method_label}_2"]+1, str(cluster_id),
+                plt.text(row[f"{method_label}_1"]+0.5, row[f"{method_label}_2"]+0.5, str(cluster_id),
                         fontsize=10, weight="bold", ha="center", va="center", color="black",
                         bbox=dict(facecolor="white", alpha=0.6, boxstyle="round,pad=0.3"))
             plt.tight_layout()

@@ -46,7 +46,7 @@ from distributed import as_completed
 # from concurrent.futures import ProcessPoolExecutor
 
 from topic3d.workflow._parsers import parse_cli_arguments_full
-from topic3d.workflow._dataops import load_data, prepare_proximity_data, split_proximity_data
+from topic3d.workflow._dataops import load_data_file, prepare_proximity_data, split_proximity_data
 from topic3d.workflow.training import initialize_full, decompose
 
 config.set({'distributed.worker.daemon': False})
@@ -60,7 +60,7 @@ def run_decomposition_pipeline(args):
     print(f"Running the main pipeline")
 
     # Step 1: Load data using internal workflow API
-    data = load_data(path_to_file=args.data_file)
+    data = load_data_file(path_to_file=args.data_file)
     
     # Step 2: Convert Namespace to dict for supplying parameters as required by the API
     params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here

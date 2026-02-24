@@ -19,7 +19,7 @@ def parse_num_components(value):
 # Main function for parsing arguments for topic3d-run and topic3d-run-dask
 def parse_cli_arguments_full(parallelization=False):
     """
-    Parse command-line arguments for topic decomposition using topic3d.
+    Parse command-line arguments for the full topic decomposition pipeline using topic3d-full-*.
 
     Parameters
     ----------

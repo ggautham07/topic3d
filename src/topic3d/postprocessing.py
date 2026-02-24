@@ -407,3 +407,37 @@ def embed_components(components, path_to_save_dir: str,
 #     clusters_unique.append(clusters_unique.pop(0))
 #     clusters_unique = np.asarray(clusters_unique)
 #     num_clusters = len(clusters_unique)     # noise is included as a cluster
+
+
+
+
+
+
+
+
+    # TODO complete after normalization procedure is implemented
+    # def plot_proximity_stats(self, threshold: Number):
+    #     """
+    #     Plot the contact histogram
+    #     @param pwd_raw: (numpy array) contains all the raw pairwise distance maps flatten as 1D vector
+    #     @param pwd_normalized: (numpy array) contains all the raw pairwise distance maps flatten as 1D vector
+    #     @param thresh: (int) threshold for the contact in nm
+    #     @param saving_folder: (str) folder where to save the plot
+    #     @return:
+    #     """
+
+    #     raw_contacts = np.where(np.isnan(pwd_raw), np.nan, pwd_raw < thresh)
+    #     raw_contacts = np.nansum(raw_contacts, axis=1)
+    #     normalized_contacts = np.where(np.isnan(pwd_normalized), np.nan, pwd_normalized < thresh)
+    #     normalized_contacts = np.nansum(normalized_contacts, axis=1)
+
+    #     plt.figure(figsize=(8, 6))
+    #     sns.histplot(raw_contacts, bins=50, kde=True, alpha=0.5)
+    #     sns.histplot(normalized_contacts, bins=50, kde=True, alpha=0.5)
+    #     plt.xlabel("Contact Values")
+    #     plt.ylabel("Frequency")
+    #     plt.title("Histogram of Contacts")
+    #     plt.legend(["raw", "normalized"])
+    #     plt.savefig(path.join(saving_folder, f'contact_stat_thresh_{int(thresh)}nm.png'), dpi=150
+    #                 , bbox_inches='tight')
+    #     plt.close()

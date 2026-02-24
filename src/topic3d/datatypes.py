@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Data types for topic decomposition (:mod:`topic3d.datatypes`)
+Data types for handling chromatin tracing (:mod:`topic3d.datatypes`)
 ==============================================================
 
 This module defines core data structures for handling spatial data in chromatin 
@@ -1018,95 +1018,6 @@ class PWDistArrayStack(PWArrayStack):
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
         return fig
-        
-
-    # def plot_pwds_avg(self, method: str = "mean",
-    #                   path_to_save: str = "",
-    #                   form: str = "triangle", cmap: str = "Reds_r"):
-    #     """
-    #     Plot the ensemble-averaged pairwise distance matrix across the stack.
-
-    #     Parameters
-    #     ----------
-    #     path_to_save : str
-    #         Path (with file extension) where the figure will be saved.
-    #     method : str, default="mean"
-    #         Aggregation method to compute ensemble average. Supported values: "mean", "median".
-    #     form : str, default="triangle"
-    #         Format of the plot: "triangle" for lower triangle heatmap, or "square" for full matrix heatmap.
-    #     cmap : str, default="Reds_r"
-    #         Matplotlib colormap to use for the plot.
-
-    #     Returns
-    #     -------
-    #     Figure
-    #         Saves the plot to the specified file path.
-
-    #     Examples
-    #     --------
-    #     >>> stack.plot_pwds_avg("figs/avg_pwds.svg", method="mean", form="square", cmap="viridis")
-    #     """
-
-    #     assert isinstance(path_to_save, str)
-    #     assert form in ["triangle", "square"]
-    #     assert isinstance(method, str) and method in ["mean", "median"]
-
-    #     wflag = self._set_figsave_flag(path_to_save)
-
-    #     map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
-
-    #     matrix = self.ensemble(method=method)
-    #     fig = map_form_fn[form](items=[matrix],
-    #                             titles=[f"$n = ${self.num_items:,}"],
-    #                             cmap=cmap,
-    #                             cbar_label=f"{method} distance")
-        
-    #     if wflag:
-    #         fig.savefig(path_to_save, bbox_inches="tight")
-    #         plt.close(fig)
-    #     return fig
-    
-
-    # def plot_pwds_random_examples(self, num_items: int = 9, random_seed: int = None,
-    #                               path_to_save: str = "", form: str = "triangle", cmap="Reds_r", include_cbar=True):
-    #     """
-    #     Plot a set of randomly-picked PWD maps from the dataset.
-
-    #     Parameters
-    #     --------
-    #     num_items : Number
-    #         number of items to plot
-    #     random_seed : int or None
-    #         random seed for reproducibility
-    #     path_to_save : str
-    #         where to save the plot, if unspecified, returns only the Figure
-
-    #     Returns
-    #     --------
-    #     Figure
-    #     """
-
-    #     assert isinstance(num_items, int)
-    #     assert isinstance(path_to_save, str)
-    #     assert form in ["triangle", "square"]
-
-    #     wflag = self._set_figsave_flag(path_to_save)
-
-    #     map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
-
-    #     random_gen = np.random.default_rng(seed=random_seed)
-    #     idxs = random_gen.integers(self.num_items, size=num_items)
-        
-    #     fig = map_form_fn[form](items=self[idxs, ...],
-    #                             titles=[f"Index  {i:,}" for i in idxs],
-    #                             cmap=cmap,
-    #                             cbar_label="distance",
-    #                             include_cbar=include_cbar)
-        
-    #     if wflag:
-    #         fig.savefig(path_to_save, bbox_inches="tight")
-    #         plt.close(fig)
-    #     return fig
 
 
 class PWProxArrayStack(PWArrayStack):
@@ -1143,57 +1054,6 @@ class PWProxArrayStack(PWArrayStack):
         # reset the attribute from passed original object
         self.num_items = getattr(obj, "num_items", None)
         self.num_bc = getattr(obj, "num_bc", None)
-
-
-    # def plot_proximity_avg(self, threshold: Number, hardness: Number = 1, keep_NaNs: bool = False,
-    #                        path_to_save: str = "", form: str = "triangle", cmap: str = "Reds"):
-    #     """
-    #     Plot the ensemble-averaged proximity matrix based on a distance threshold.
-
-    #     Proximity values are computed using a sigmoidal transformation or hard thresholding, then averaged
-    #     across all items in the stack.
-
-    #     Parameters
-    #     ----------
-    #     path_to_save : str
-    #         Path (with file extension) where the figure will be saved.
-    #     threshold : float
-    #         Distance threshold used to compute proximity.
-    #     hardness : float, default=1
-    #         Controls the slope of the sigmoid used for soft thresholding. 1 = hard threshold.
-    #     form : str, default="triangle"
-    #         Format of the plot: "triangle" for triangular heatmap, or "square" for full matrix heatmap.
-    #     cmap : str, default="Reds"
-    #         Matplotlib colormap to use for the plot.
-
-    #     Returns
-    #     -------
-    #     None
-    #         Saves the plot to the specified file path.
-
-    #     Examples
-    #     --------
-    #     >>> stack.plot_proximity_avg("figs/avg_proximity.svg", threshold=0.4, hardness=0.5, form="triangle", cmap="coolwarm")
-    #     """
-        
-    #     assert isinstance(path_to_save, str)
-    #     assert form in ["triangle", "square"]
-
-    #     wflag = self._set_figsave_flag(path_to_save)
-
-    #     map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
-
-    #     prox_stack = self.proximity(threshold=threshold, hardness=hardness, keep_NaNs=keep_NaNs)
-    #     prox_mean = np.nanmean(prox_stack, axis=0)
-    #     fig = map_form_fn[form](items=[prox_mean],
-    #                             titles=[f"$n = ${self.num_items:,}  |  $k = ${threshold} nm |  $h = ${hardness:.1f}"],
-    #                             cmap=cmap,
-    #                             cbar_label="mean proximity")
-
-    #     if wflag:
-    #         fig.savefig(path_to_save, bbox_inches="tight")
-    #         plt.close(fig)
-    #     return fig
     
     
     def plot_proximity_avg_comparisons(self, thresholds:Iterable, hardnesses:Iterable,
@@ -1225,74 +1085,3 @@ class PWProxArrayStack(PWArrayStack):
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
         return fig
-    
-
-    # def plot_proximity_random_examples(self, threshold: Number, hardness: Number,
-    #                                    num_items: int = 9, random_seed: int = None,
-    #                                    path_to_save: str = "", form: str = "triangle", cmap="Reds", include_cbar=True):
-    #     """
-    #     Plot a set of randomly-picked proximity maps from the dataset.
-
-    #     Parameters
-    #     --------
-    #     num_items : Number
-    #         number of items to plot
-    #     random_seed : int or None
-    #         random seed for reproducibility
-    #     path_to_save : str
-    #         where to save the plot, if unspecified, returns only the Figure
-
-    #     Returns
-    #     --------
-    #     Figure
-    #     """
-
-    #     assert isinstance(num_items, int)
-    #     assert isinstance(path_to_save, str)
-    #     assert form in ["triangle", "square"]
-
-    #     wflag = self._set_figsave_flag(path_to_save)
-
-    #     map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
-
-    #     random_gen = np.random.default_rng(seed=random_seed)
-    #     idxs = random_gen.integers(self.num_items, size=num_items)
-        
-    #     fig = map_form_fn[form](items=self.proximity(threshold, hardness)[idxs, ...],
-    #                             titles=[f"Idx {i:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}" for i in idxs],
-    #                             cmap=cmap,
-    #                             cbar_label="proximity",
-    #                             include_cbar=include_cbar)
-        
-    #     if wflag:
-    #         fig.savefig(path_to_save, bbox_inches="tight")
-    #         plt.close(fig)
-    #     return fig
-
-
-    # TODO complete after normalization procedure is implemented
-    # def plot_proximity_stats(self, threshold: Number):
-    #     """
-    #     Plot the contact histogram
-    #     @param pwd_raw: (numpy array) contains all the raw pairwise distance maps flatten as 1D vector
-    #     @param pwd_normalized: (numpy array) contains all the raw pairwise distance maps flatten as 1D vector
-    #     @param thresh: (int) threshold for the contact in nm
-    #     @param saving_folder: (str) folder where to save the plot
-    #     @return:
-    #     """
-
-    #     raw_contacts = np.where(np.isnan(pwd_raw), np.nan, pwd_raw < thresh)
-    #     raw_contacts = np.nansum(raw_contacts, axis=1)
-    #     normalized_contacts = np.where(np.isnan(pwd_normalized), np.nan, pwd_normalized < thresh)
-    #     normalized_contacts = np.nansum(normalized_contacts, axis=1)
-
-    #     plt.figure(figsize=(8, 6))
-    #     sns.histplot(raw_contacts, bins=50, kde=True, alpha=0.5)
-    #     sns.histplot(normalized_contacts, bins=50, kde=True, alpha=0.5)
-    #     plt.xlabel("Contact Values")
-    #     plt.ylabel("Frequency")
-    #     plt.title("Histogram of Contacts")
-    #     plt.legend(["raw", "normalized"])
-    #     plt.savefig(path.join(saving_folder, f'contact_stat_thresh_{int(thresh)}nm.png'), dpi=150
-    #                 , bbox_inches='tight')
-    #     plt.close()

@@ -55,7 +55,7 @@ from topic3d.datamgrs import ProcessedData
 #     return dataobj
 
 
-def load_data(path_to_file) -> (np.ndarray | ProcessedData | dict):
+def load_data_file(path_to_file) -> (np.ndarray | ProcessedData | dict):
     """
     Load a dataset from a Numpy or HDF5 file to yield an array, dictionary or ProcessedData object
 
@@ -189,7 +189,7 @@ def prepare_proximity_data(data: ProcessedData | dict | np.ndarray,
     return proximity
 
 
-def split_proximity_data(data:np.ndarray, train_data_proportion: Number = 1, **kwargs):
+def split_proximity_data(data: np.ndarray, train_data_proportion: Number = 1, **kwargs):
     """
     Assign train and test data randomly based on train data proportion
     """

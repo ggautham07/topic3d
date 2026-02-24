@@ -31,7 +31,7 @@ Dependencies:
 
 
 from topic3d.workflow._parsers import parse_cli_arguments_full
-from topic3d.workflow._dataops import load_data, prepare_proximity_data, split_proximity_data
+from topic3d.workflow._dataops import load_data_file, prepare_proximity_data, split_proximity_data
 from topic3d.workflow.training import initialize_full, decompose
 
 
@@ -45,7 +45,7 @@ def main():
     params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here
 
     # Step 3: Load data using internal workflow API
-    data = load_data(path_to_file=args.data_file)
+    data = load_data_file(path_to_file=args.data_file)
 
     # Step 4: Initialize run metadata and output directories
     args_full = initialize_full(params=params,
