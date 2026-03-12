@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.abspath('../../src'))
 project = 'topic3d'
 copyright = '2026, Gautham Ganesh, Jean-Bernard Fiche, Marcelo Nollmann'
 author = 'Gautham Ganesh, Jean-Bernard Fiche, Marcelo Nollmann'
-release = 'v0.9dev'
+release = '0.0.0-dev.9'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

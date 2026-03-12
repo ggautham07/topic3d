@@ -1,0 +1,156 @@
+┣ 📂docs
+┃ ┣ 📂build
+┃ ┃ ┣ 📂doctrees
+┃ ┃ ┃ ┣ 📂api
+┃ ┃ ┃ ┃ ┣ 📜modules.doctree
+┃ ┃ ┃ ┃ ┗ 📜topic3d.doctree
+┃ ┃ ┃ ┣ 📜environment.pickle
+┃ ┃ ┃ ┗ 📜index.doctree
+┃ ┃ ┗ 📂html
+┃ ┃   ┣ 📂_modules
+┃ ┃   ┃ ┣ 📂topic3d
+┃ ┃   ┃ ┃ ┣ 📜datamgrs.html
+┃ ┃   ┃ ┃ ┣ 📜datatypes.html
+┃ ┃   ┃ ┃ ┣ 📜handlers.html
+┃ ┃   ┃ ┃ ┣ 📜postprocessing.html
+┃ ┃   ┃ ┃ ┗ 📜visualization.html
+┃ ┃   ┃ ┗ 📜index.html
+┃ ┃   ┣ 📂_sources
+┃ ┃   ┃ ┣ 📂api
+┃ ┃   ┃ ┃ ┣ 📜modules.rst.txt
+┃ ┃   ┃ ┃ ┗ 📜topic3d.rst.txt
+┃ ┃   ┃ ┗ 📜index.rst.txt
+┃ ┃   ┣ 📂_static
+┃ ┃   ┃ ┣ 📂scripts
+┃ ┃   ┃ ┃ ┣ 📜furo-extensions.js
+┃ ┃   ┃ ┃ ┣ 📜furo.js
+┃ ┃   ┃ ┃ ┣ 📜furo.js.LICENSE.txt
+┃ ┃   ┃ ┃ ┗ 📜furo.js.map
+┃ ┃   ┃ ┣ 📂styles
+┃ ┃   ┃ ┃ ┣ 📜furo-extensions.css
+┃ ┃   ┃ ┃ ┣ 📜furo-extensions.css.map
+┃ ┃   ┃ ┃ ┣ 📜furo.css
+┃ ┃   ┃ ┃ ┗ 📜furo.css.map
+┃ ┃   ┃ ┣ 📜base-stemmer.js
+┃ ┃   ┃ ┣ 📜basic.css
+┃ ┃   ┃ ┣ 📜debug.css
+┃ ┃   ┃ ┣ 📜doctools.js
+┃ ┃   ┃ ┣ 📜documentation_options.js
+┃ ┃   ┃ ┣ 📜english-stemmer.js
+┃ ┃   ┃ ┣ 📜file.png
+┃ ┃   ┃ ┣ 📜language_data.js
+┃ ┃   ┃ ┣ 📜minus.png
+┃ ┃   ┃ ┣ 📜plus.png
+┃ ┃   ┃ ┣ 📜pygments.css
+┃ ┃   ┃ ┣ 📜searchtools.js
+┃ ┃   ┃ ┣ 📜skeleton.css
+┃ ┃   ┃ ┗ 📜sphinx_highlight.js
+┃ ┃   ┣ 📂api
+┃ ┃   ┃ ┣ 📜modules.html
+┃ ┃   ┃ ┗ 📜topic3d.html
+┃ ┃   ┣ 📜.buildinfo
+┃ ┃   ┣ 📜.buildinfo.bak
+┃ ┃   ┣ 📜genindex.html
+┃ ┃   ┣ 📜index.html
+┃ ┃   ┣ 📜objects.inv
+┃ ┃   ┣ 📜py-modindex.html
+┃ ┃   ┣ 📜search.html
+┃ ┃   ┗ 📜searchindex.js
+┃ ┣ 📂source
+┃ ┃ ┣ 📂_static
+┃ ┃ ┣ 📂_templates
+┃ ┃ ┣ 📂api
+┃ ┃ ┃ ┣ 📜modules.rst
+┃ ┃ ┃ ┗ 📜topic3d.rst
+┃ ┃ ┣ 📜conf.py
+┃ ┃ ┗ 📜index.rst
+┃ ┣ 📜make.bat
+┃ ┗ 📜Makefile
+┣ 📂examples
+┃ ┣ 📂attachments
+┃ ┃ ┗ 📜simple-domain.svg
+┃ ┣ 📂data
+┃ ┃ ┣ 📜sample_exp_test.npy
+┃ ┃ ┣ 📜sample_exp.npy
+┃ ┃ ┣ 📜sample_sim_test.npy
+┃ ┃ ┗ 📜sample_sim_train.npy
+┃ ┣ 📂models
+┃ ┃ ┗ 📜model_exp.jl
+┃ ┣ 📂results
+┃ ┃ ┣ 📂074b88
+┃ ┃ ┃ ┣ 📜logs.log
+┃ ┃ ┃ ┗ 📜summary.json
+┃ ┃ ┣ 📂10d822
+┃ ┃ ┃ ┣ 📜components_sorted.png
+┃ ┃ ┃ ┣ 📜components.png
+┃ ┃ ┃ ┣ 📜decomposition.png
+┃ ┃ ┃ ┣ 📜logs.log
+┃ ┃ ┃ ┣ 📜model_lda.jl
+┃ ┃ ┃ ┣ 📜results.h5
+┃ ┃ ┃ ┗ 📜summary.json
+┃ ┃ ┣ 📂2c567b
+┃ ┃ ┃ ┣ 📜components_sorted.png
+┃ ┃ ┃ ┣ 📜components.png
+┃ ┃ ┃ ┣ 📜decomposition.png
+┃ ┃ ┃ ┣ 📜logs.log
+┃ ┃ ┃ ┣ 📜model_lda.jl
+┃ ┃ ┃ ┣ 📜results.h5
+┃ ┃ ┃ ┗ 📜summary.json
+┃ ┃ ┣ 📂42eea7
+┃ ┃ ┃ ┣ 📜components_sorted.png
+┃ ┃ ┃ ┣ 📜components.png
+┃ ┃ ┃ ┣ 📜decomposition.png
+┃ ┃ ┃ ┣ 📜logs.log
+┃ ┃ ┃ ┣ 📜model_lda.jl
+┃ ┃ ┃ ┣ 📜results.h5
+┃ ┃ ┃ ┗ 📜summary.json
+┃ ┃ ┣ 📂a23231
+┃ ┃ ┃ ┣ 📜components_sorted.png
+┃ ┃ ┃ ┣ 📜components.png
+┃ ┃ ┃ ┣ 📜decomposition.png
+┃ ┃ ┃ ┣ 📜embedding_decomposition_pca.png
+┃ ┃ ┃ ┣ 📜embedding_decomposition_umap_clustered.png
+┃ ┃ ┃ ┣ 📜embedding_decomposition_umap.png
+┃ ┃ ┃ ┣ 📜logs.log
+┃ ┃ ┃ ┣ 📜model_embedding_decomposition_pca.jl
+┃ ┃ ┃ ┣ 📜model_embedding_decomposition_umap_clusterer.jl
+┃ ┃ ┃ ┣ 📜model_embedding_decomposition_umap.jl
+┃ ┃ ┃ ┣ 📜model_lda.jl
+┃ ┃ ┃ ┣ 📜results.h5
+┃ ┃ ┃ ┗ 📜summary.json
+┃ ┃ ┗ 📂e888c5
+┃ ┃   ┣ 📜components_divergence.png
+┃ ┃   ┣ 📜components_sorted.png
+┃ ┃   ┣ 📜components.png
+┃ ┃   ┣ 📜decomposition.png
+┃ ┃   ┣ 📜embedding_decomposition_pca.png
+┃ ┃   ┣ 📜embedding_decomposition_umap.png
+┃ ┃   ┣ 📜logs.log
+┃ ┃   ┣ 📜model_embedding_decomposition_pca.jl
+┃ ┃   ┣ 📜model_embedding_decomposition_umap.jl
+┃ ┃   ┣ 📜model_lda.jl
+┃ ┃   ┣ 📜results.h5
+┃ ┃   ┗ 📜summary.json
+┃ ┣ 📜postprocessing.ipynb
+┃ ┗ 📜training.ipynb
+┣ 📂src
+┃ ┣ 📂routines
+┃ ┃ ┣ 📜cli.py
+┃ ┃ ┣ 📜decompose.py
+┃ ┃ ┣ 📜run_full_dask.py
+┃ ┃ ┗ 📜run_full.py
+┃ ┣ 📂topic3d
+┃ ┃ ┣ 📂workflow
+┃ ┃ ┃ ┣ 📜_dataops.py
+┃ ┃ ┃ ┣ 📜_logging.py
+┃ ┃ ┃ ┣ 📜_parsers.py
+┃ ┃ ┃ ┗ 📜training.py
+┃ ┃ ┣ 📜__init__.py
+┃ ┃ ┣ 📜_helper.py
+┃ ┃ ┣ 📜datatypes.py
+┃ ┃ ┣ 📜results.py
+┃ ┃ ┗ 📜visualization.py
+┣ 📂tests
+┣ 📜.gitignore
+┣ 📜pyproject.toml
+┗ 📜README.md

@@ -11,7 +11,7 @@ import h5py
 from scipy.spatial.distance import squareform
 
 from topic3d.datatypes import CoordsArrayStack, PWDistArrayStack
-from topic3d.datamgrs import ProcessedData
+from temp.datamgrs import ProcessedData
 
 
 # NOTE legacy function to load data
@@ -169,7 +169,7 @@ def prepare_proximity_data(data: ProcessedData | dict | np.ndarray,
     else:
         pwds_final = PWDistArrayStack(data)
 
-    proximity = pwds_final.proximity(threshold=params["proximity_threshold"], hardness=params["proximity_hardness"])
+    proximity = pwds_final.compute_proximity(threshold=params["proximity_threshold"], hardness=params["proximity_hardness"])
     proximity_avg = np.nanmean(proximity, axis=0)
     logging.info(f"[{uid}] Computed proximity stack with threshold {params['proximity_threshold']} and hardness {params['proximity_hardness']}")
    

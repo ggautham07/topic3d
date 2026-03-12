@@ -13,7 +13,7 @@ from . import visualization as vzl
 
 
 # TODO
-class DecompositionResult:
+class Topic3DResult:
     """
     Handler for LDA-based decomposition results and downstream analyses.
 
@@ -665,6 +665,8 @@ class DecompositionResult:
         # Prepare df for plotting
         embedding_df = pd.DataFrame(embedding, columns=[f"{method_label}_{i}" \
                                                         for i in range(1, num_components_embedding+1)])
+        component_reprez = np.argmax(self.decomposition, axis=1)
+        embedding_df["representative"] = [f"CFM #{i}" for i in component_reprez]
 
         # Plotting the results
         fig, ax = plt.subplots(dpi=300)
@@ -672,8 +674,8 @@ class DecompositionResult:
         fig.set_figheight(8)
         sns.scatterplot(data=embedding_df,
                 x=embedding_df.columns[0], y=embedding_df.columns[1],
-                s=10, alpha=0.4, color="#216eff", edgecolor="none",
-                legend=False,
+                s=10, alpha=0.4, hue="representative", edgecolor="none",
+                legend=True,
                 ax=ax)
         ax.set_title(method)
         fig.tight_layout()

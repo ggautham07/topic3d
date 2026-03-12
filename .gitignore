@@ -6,3 +6,4 @@ examples/data/
 examples/results/
 __pycache__/
 build/
+temp/

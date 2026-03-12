@@ -1,3 +1,17 @@
+"""
+Workflow utilities for training and decomposition (:mod:`topic3d.workflow.training`).
+
+This module contains helpers used by the command-line interface to:
+
+- create a results directory and configure logging,
+- train a scikit-learn :class:`~sklearn.decomposition.LatentDirichletAllocation` model,
+- transform new datasets with an existing model,
+- serialize outputs to disk via :class:`topic3d.handlers.DecompositionResult`.
+
+The functions are intentionally lightweight wrappers around the core API.
+
+"""
+
 from os import path, makedirs
 import logging
 from uuid import uuid4
@@ -8,7 +22,7 @@ import numpy as np
 import h5py
 from sklearn.decomposition import LatentDirichletAllocation
 
-from topic3d.handlers import DecompositionResult
+from topic3d.results import Topic3DResult
 
 from ._logging import setup_log, setup_log_simple
 
@@ -34,7 +48,31 @@ def readable_duration(duration:Number):
 
 def initialize_simple(params: dict, dir_results: str, path_to_data: str | list):
     """
-    Initialize the directory to train data and save results from topic3d-decompose
+    Initialize a run directory and logging for a CLI invocation (simple layout).
+
+    This variant creates a unique subdirectory under ``dir_results`` (if it exists)
+    and stores a ``summary.json`` with run metadata.
+
+    Parameters
+    ----------
+    params : dict
+        Decomposition/training parameters. Must be JSON-serializable.
+    dir_results : str
+        Root directory where run outputs should be stored. If this directory does not
+        exist, the run proceeds without saving outputs.
+    path_to_data : str | list
+        Input dataset path(s) passed by the CLI.
+
+    Returns
+    -------
+    dict
+        A run summary containing ``uid`` and input paths, and (when saving is enabled)
+        also ``path_to_training`` and ``path_to_log``.
+
+    See Also
+    --------
+    initialize_full
+        Initialization with a deeper directory hierarchy based on parameters.
     """
 
     assert type(params) == dict
@@ -56,9 +94,14 @@ def initialize_simple(params: dict, dir_results: str, path_to_data: str | list):
         setup_log(log_file)     # Setup logging to file and console
     else:
         setup_log_simple()
-    
+        dir_training = ""
+        log_file = ""
+
     logging.info("-" * 50)
-    logging.info(f"[{uid}] Will save trainings to: {dir_training}")
+    if save_flag:
+        logging.info(f"[{uid}] Will save run outputs to: {dir_training}")
+    else:
+        logging.info(f"[{uid}] Results/logs will not be saved (no valid dir_results)")
 
     summary = params.copy()
     summary.update({"uid": uid,
@@ -78,7 +121,34 @@ def initialize_simple(params: dict, dir_results: str, path_to_data: str | list):
 
 def initialize_full(params: dict, dir_results: str, path_to_data: str, tag: str = None, save_logs=True):
     """
-    Initialize the directory to train data and save results
+    Initialize a run directory and logging for a CLI invocation (structured layout).
+
+    Compared to :func:`initialize_simple`, this function organizes outputs under::
+
+        <dir_results>/<tag>/<pattern>/<uid>/
+
+    where ``pattern`` highlights key hyperparameters (currently number of components
+    and proximity threshold).
+
+    Parameters
+    ----------
+    params : dict
+        Decomposition/training parameters (must include ``num_components`` and
+        ``proximity_threshold`` keys).
+    dir_results : str
+        Existing directory where outputs are written.
+    path_to_data : str
+        Input dataset path.
+    tag : str, optional
+        Label used to group runs. Defaults to the dataset filename stem.
+    save_logs : bool, default=True
+        If True, write logs to ``logs.log`` in the run directory; otherwise log only
+        to the console.
+
+    Returns
+    -------
+    dict
+        Run summary including ``uid``, ``path_to_training`` and (optionally) ``path_to_log``.
     """
 
     assert type(params) == dict
@@ -100,9 +170,14 @@ def initialize_full(params: dict, dir_results: str, path_to_data: str, tag: str 
         setup_log(log_file)     # Setup logging to file and console
     else:
         setup_log_simple()
-    
+        dir_training = ""
+        log_file = ""
+
     logging.info("-" * 50)
-    logging.info(f"[{uid}] Will save trainings to: {dir_training}")
+    if save_flag:
+        logging.info(f"[{uid}] Will save run outputs to: {dir_training}")
+    else:
+        logging.info(f"[{uid}] Results/logs will not be saved (no valid dir_results)")
 
     summary = params.copy()
     summary.update({"uid": uid,
@@ -126,9 +201,51 @@ def decompose(params: dict,
               dir_to_save: str = "",
               **kwargs):
     """
-    Run topic decomposition on data with the parameters given.
-    
-    Saves results to dir_to_save while actively logging if it was initialized.
+    Train and/or apply an LDA model to pairwise proximity data.
+
+    This function is the core entry point used by the CLI. It supports three modes:
+
+    1. **Train only**: provide ``data_train`` (and no ``data_test``).
+    2. **Transform only**: provide ``data_test`` with an existing ``model``.
+    3. **Train + transform**: provide both ``data_train`` and ``data_test``.
+
+    Inputs must be 2D arrays where rows are items (cells/traces) and columns are
+    flattened pairwise features of length ``num_bc * (num_bc - 1) // 2`` (compatible
+    with :func:`scipy.spatial.distance.squareform`).
+
+    Parameters
+    ----------
+    params : dict
+        LDA/training parameters. Expected keys include ``num_components``, ``max_iter``,
+        ``learning_method``, ``batch_size`` and ``random_state``.
+    data_train, data_test : numpy.ndarray, optional
+        Arrays of shape ``(n_items, n_pairs)``.
+    model : sklearn.decomposition.LatentDirichletAllocation, optional
+        Existing fitted model to reuse. If omitted, a new model is instantiated from
+        ``params``.
+    dir_to_save : str, optional
+        If non-empty, save results and standard plots into this directory.
+    **kwargs
+        Extra metadata used by the CLI (e.g. ``uid`` and a pre-built ``summary`` dict).
+
+    Returns
+    -------
+    topic3d.handlers.DecompositionResult
+        Object containing the fitted model (possibly reused), the decomposition matrix
+        (topic proportions per item), and run parameters.
+
+    Notes
+    -----
+    When training is performed, the function additionally computes several coherence
+    scores for different proportions of top component pixels and stores them under
+    ``coherence/`` in the saved HDF5 results file.
+
+    Raises
+    ------
+    AssertionError
+        If inputs are malformed (e.g., incompatible vector lengths).
+    Exception
+        Propagates errors from model fitting, saving, or coherence computation.
     """
     
     assert isinstance(params, dict)
@@ -214,7 +331,7 @@ def decompose(params: dict,
         logging.error(f"[{uid}] Error occurred during training: {str(err)}")
 
     try:
-        results = DecompositionResult(model=model,
+        results = Topic3DResult(model=model,
                                       decomposition=decomposition,
                                       params=params)
         summary = kwargs.get("summary", params)
