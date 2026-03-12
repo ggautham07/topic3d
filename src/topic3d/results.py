@@ -157,12 +157,12 @@ class Topic3DResult:
 
     # TODO multiple methods
     @staticmethod
-    def _extract_threshold(decomposition, method=None):
+    def _extract_representativity_threshold(decomposition, method=None):
         if method is None:
             return (1 / decomposition.shape[-1]) + 0.1
 
 
-    def representativity(self, threshold: float = None) -> np.ndarray:
+    def compute_representativity(self, threshold: float = None) -> np.ndarray:
         """
         Compute the representativity of each component across the dataset.
 
@@ -186,7 +186,7 @@ class Topic3DResult:
         """
         
         if threshold is None:
-            threshold = self._extract_threshold(self.decomposition)
+            threshold = self._extract_representativity_threshold(self.decomposition)
         else:
             assert isinstance(threshold, Number)
 
@@ -349,11 +349,11 @@ class Topic3DResult:
         """
 
         if threshold is None:
-            threshold = self._extract_threshold(self.decomposition)
+            threshold = self._extract_representativity_threshold(self.decomposition)
         else:
             assert isinstance(threshold, Number)
         
-        reprez = self.representativity(threshold)
+        reprez = self.compute_representativity(threshold)
         idxs = np.argsort(reprez)[::-1]
         freqs = reprez / self.num_items
 
@@ -410,7 +410,7 @@ class Topic3DResult:
 
 
     # TODO returning mean divergence for decomposition, sorting the matrix by least to most distant?
-    def divergence(self, metric="jensenshannon", path_to_save:str = ""):
+    def compute_CFM_divergence(self, metric="jensenshannon", path_to_save:str = ""):
         """
         Compute the pairwise divergence between all components.
 
@@ -496,7 +496,7 @@ class Topic3DResult:
 
         map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
-        reprez = self.representativity(threshold=kwargs.get("threshold", (1 / self.num_components) + 0.1))
+        reprez = self.compute_representativity(threshold=kwargs.get("threshold", (1 / self.num_components) + 0.1))
         
         if ordered:
             idxs = self.sort_components(threshold=kwargs.get("threshold", (1 / self.num_components) + 0.1))
@@ -550,7 +550,7 @@ class Topic3DResult:
         fig = plt.figure(figsize=(8, 10), dpi=300)
         ax = fig.add_subplot(1, 1, 1)
 
-        reprez = self.representativity(threshold=(1 / self.num_components) + 0.1)
+        reprez = self.compute_representativity(threshold=(1 / self.num_components) + 0.1)
         idxs = np.argsort(reprez)[::-1]
 
         sns.heatmap(self.decomposition[:, idxs] if ordered else self.decomposition, cmap=cmap, ax=ax)
@@ -735,10 +735,33 @@ class Topic3DResult:
             centroids = embedding_clusters_df.groupby("cluster")[[f"{method_label}_1", f"{method_label}_2"]].mean()
             for cluster_id, row in centroids.iterrows():
                 plt.text(row[f"{method_label}_1"]+0.5, row[f"{method_label}_2"]+0.5, str(cluster_id),
-                        fontsize=10, weight="bold", ha="center", va="center", color="black",
-                        bbox=dict(facecolor="white", alpha=0.6, boxstyle="round,pad=0.3"))
+                         fontsize=10, weight="bold", ha="center", va="center", color="black",
+                         bbox=dict(facecolor="white", alpha=0.6, boxstyle="round,pad=0.3"))
             plt.tight_layout()
             plt.savefig(path.join(dir_to_save, f"embedding_decomposition_{method}_clustered.png"), dpi=300)
             plt.close()
 
         return embedding_df
+
+
+
+class Topic3DResultCollection():
+    
+    def __init__(self, list):
+        pass
+
+
+    def plot_mean_perplexity_by_num_CFMs(self):
+        return
+
+    def plot_mean_coherence_by_num_CFMs(self, method=""):
+        return
+    
+    def plot_mean_empty_by_num_CFMs(self):
+        return
+    
+    def embed_CFMs(method="UMAP"):
+        return
+    
+    def compute_consensus(self, metric="jensenshannon"):
+        return

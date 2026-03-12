@@ -267,7 +267,7 @@ class CoordsArrayStack(np.ndarray):
         """
 
         method = method.lower()
-        assert method in ["naive", "jost"]
+        assert method in ["naive"]
         if np.all(~np.isnan(self)):
             warnings.warn("No NaNs to impute in the stack")
             return self
@@ -279,63 +279,9 @@ class CoordsArrayStack(np.ndarray):
             is_missing = np.isnan(stack_imp[:, 1:-1])   # check missing coordinates
             stack_imp[:, 1:-1][is_missing] = neighbor_means[np.where(is_missing)]   # replace NaNs with mean pos
 
-        elif method == "jost":
-            # needs the mean-squared pairwise distance matrix, regularized
-            pwds_mean2 = squareform(self.compute_pwds().compute_ensemble_measure(method="mean") ** 2)
-            pwds_mean2 = PWDistArrayStack._regz_pw_sq_matrix(pwds_mean2)
-            assert pwds_mean2.ndim == 2
-            for n in range(self.num_items):
-                tr = stack_imp[n][:]
-                assert tr.shape[-1] == 3
-                assert pwds_mean2.shape[0] == self.num_bc
-                # missing positions
-                missing_pos_bool = np.isnan(tr[:,0])
-                available_pos_bool = np.logical_not(missing_pos_bool)
-                s = np.sum(available_pos_bool)
-                # reorganizing each axis' coordinates
-                x = tr[:,0]
-                y = tr[:,1]
-                z = tr[:,2]
-                x_reorg = np.concatenate((x[available_pos_bool], x[missing_pos_bool]))
-                y_reorg = np.concatenate((y[available_pos_bool], y[missing_pos_bool]))
-                z_reorg = np.concatenate((z[available_pos_bool], z[missing_pos_bool]))
-                # reorganizing matrix as well
-                missing_idxs = np.argwhere(missing_pos_bool).T[0]
-                available_idxs = np.argwhere(available_pos_bool).T[0]
-                new_order = np.concatenate((available_idxs, missing_idxs))
-                mean2_reorg = PWDistArrayStack._reorg_pw_sq_matrix(pwds_mean2, new_order)
-                # get sigma matrix
-                sigma = PWDistArrayStack._cov_from_D2_matrix(mean2_reorg)
-                mu = np.zeros((1, self.num_bc-1))
-                mu_available = mu[:,:s-1]
-                mu_missing = mu[:,s-1:]
-                sigma_nz_nz = sigma[0:s-1, 0:s-1]
-                sigma_z_z = sigma[s-1:, s-1:]
-                sigma_z_nz = sigma[s-1:, 0:s-1]
-                sigma_nz_z = sigma[0:s-1, s-1:]
-                # infer conditional mean and sigma
-                mucondx = mu_missing + \
-                    (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((x_reorg[1:s] - x_reorg[0]) - mu_available).T)).T
-                mucondy = mu_missing + \
-                    (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((y_reorg[1:s] - y_reorg[0]) - mu_available).T)).T
-                mucondz = mu_missing + \
-                    (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((z_reorg[1:s] - z_reorg[0]) - mu_available).T)).T
-                sigcond = sigma_z_z - ((sigma_z_nz @ np.linalg.inv(sigma_nz_nz)) @ sigma_nz_z)
-                # infer missing positions given conditional for each axis
-                x_missing = x_reorg[0] + mucondx
-                y_missing = y_reorg[0] + mucondy
-                z_missing = z_reorg[0] + mucondz
-                std = np.sqrt(np.diag(sigcond))
-                # final inferred coordinates and the error
-                inf_coords = np.squeeze(np.concatenate((x_missing.T, y_missing.T, z_missing.T), axis=1))
-                std_xyz = np.asarray([std, std, std])
-                # replace missing coordinates with the inferred ones
-                tr[missing_idxs,:] = inf_coords
-                stack_imp[n] = tr[:]
-
         stack_imp = CoordsArrayStack(stack_imp)
 
-        return (stack_imp, std_xyz) if method == "jost" else stack_imp
+        return stack_imp
 
 
     # TODO include plotting for imputed data, currently not possible due to bar plot code structure
@@ -383,7 +329,7 @@ class CoordsArrayStack(np.ndarray):
         return fig
 
 
-class PWArrayStack(np.ndarray):
+class _PWArrayStack(np.ndarray):
     """
     Base class for stacks of flattened pairwise vectors.
 
@@ -441,92 +387,7 @@ class PWArrayStack(np.ndarray):
         if len(fp.strip()) > 0:
             return True
         return False
-    
 
-    # TODO class method to check symmetric matrices in the stack
-    # TODO apply to 3D
-    @staticmethod
-    def _make_pw_sq_matrix_symm(matrix:np.ndarray) -> np.ndarray:
-        """
-        Ensure the matrix is symmetric by copying upper triangle to lower (or averaging).
-
-        Parameters
-        ----------
-        matrix : np.ndarray
-            Square matrix.
-
-        Returns
-        -------
-        np.ndarray
-            Symmetric matrix.
-        """
-
-        assert matrix.ndim == 2
-
-        if issymmetric(matrix):
-            return matrix
-        return matrix + matrix.T - np.diag(np.diag(matrix)) if (np.tril(matrix, k=-1) == 0).all() \
-            else (matrix + matrix.T) / 2
-
-
-    # TODO finish the vectorised implementation for a 3D stack (now works for a 2D matrix)
-    @staticmethod
-    def _reorg_pw_sq_matrix(matrix:np.ndarray, idxs) -> np.ndarray:      
-        """
-        Reorder a matrix using a new set of indices.
-
-        Parameters
-        ----------
-        matrix : np.ndarray
-            Pairwise matrix to reorder.
-        idxs : array-like
-            New ordering of indices.
-
-        Returns
-        -------
-        np.ndarray
-            Reordered matrix.
-        """
-
-        assert matrix.ndim == 2
-        # assert issymmetric(matrix)
-        assert len(np.unique(idxs)) == len(idxs)
-        assert np.all(np.logical_and(idxs >= 0, idxs < matrix.shape[0]))
-
-        return matrix[:,idxs][idxs]
-    
-
-    @staticmethod
-    def _regz_pw_sq_matrix(matrix:np.ndarray, hack=False) -> np.ndarray:
-        """
-        Make matrix positive definite by adjusting negative eigenvalues (i.e., regularize).
-
-        Parameters
-        ----------
-        matrix : np.ndarray
-            Square matrix.
-        hack : bool
-            If True, forces smallest positive eigenvalue to small constant.
-
-        Returns
-        -------
-        np.ndarray
-            Regularized matrix.
-        """
-
-        assert matrix.ndim == 2
-        assert issymmetric(matrix)
-
-        eigenvals, eigenvecs = np.linalg.eig(matrix)
-        if np.all(eigenvals > 0) and hack:
-            eigenvals[np.argmin(eigenvals)] = 1e-06
-        else:
-            eigenvals[eigenvals < 0] = 1e-06
-        matrix_reg = eigenvecs @ np.diag(eigenvals) @ np.linalg.inv(eigenvecs)
-        # TODO without the following step, will the matrix be symmetric?
-        matrix_reg = PWDistArrayStack._make_pw_sq_matrix_symm(matrix_reg)
-        return matrix_reg
-    
 
     def compute_efficiency(self, by: str = "pixel") -> np.ndarray:
         """
@@ -775,7 +636,7 @@ class PWArrayStack(np.ndarray):
 
 
 
-class PWDistArrayStack(PWArrayStack):
+class PWDistArrayStack(_PWArrayStack):
     """
     A stack of pairwise distance vectors (1D) with utilities for matrix operations and visualization.
     
@@ -845,67 +706,6 @@ class PWDistArrayStack(PWArrayStack):
         self.num_bc = getattr(obj, "num_bc", None)
 
 
-    # @staticmethod
-    # def _cov_from_D2_matrix(matrix:np.ndarray) -> np.ndarray:
-    #     """
-    #     Compute covariance matrix from mean-squared distance matrix assuming a Gaussian distribution.
-
-    #     Parameters
-    #     ----------
-    #     matrix : np.ndarray
-    #         Symmetric distance² matrix.
-
-    #     Returns
-    #     -------
-    #     np.ndarray
-    #         Covariance matrix.
-    #     """
-
-    #     assert matrix.ndim == 2
-    #     assert issymmetric(matrix)
-    #     num_bc = matrix.shape[0]
-
-    #     cov = np.zeros((num_bc-1, num_bc-1))
-    #     np.fill_diagonal(cov, matrix[0,1:])
-    #     for i in range(num_bc-1):
-    #         for j in range(i+1, num_bc-1):
-    #             cov[i,j] = (cov[i,i] + cov[j,j] - matrix[i+1, j+1]) / 2
-        
-    #     cov = PWDistArrayStack._make_pw_sq_matrix_symm(cov)
-    #     return cov
-
-
-    # @staticmethod
-    # def _D2_matrix_from_cov(cov:np.ndarray) -> np.ndarray:
-    #     """
-    #     Compute mean-squared distance matrix from covariance matrix assuming a Gaussian distribution.
-
-    #     Parameters
-    #     ----------
-    #     cov : np.ndarray
-    #         Covariance matrix.
-
-    #     Returns
-    #     -------
-    #     np.ndarray
-    #         Symmetric mean-squared distance matrix.
-    #     """
-
-    #     assert cov.ndim == 2
-    #     N = cov.shape[0] + 1
-
-    #     mean2 = np.zeros((N, N))    
-    #     mean2[0,1:] = np.diag(cov)
-    #     mean2 = PWDistArrayStack._make_pw_sq_matrix_symm(mean2)
-    #     for i in range(1, N):
-    #         for j in range(i+1, N):
-    #             mean2[i,j] = -2 * cov[i-1, j-1] + cov[i-1, i-1] + cov[j-1, j-1]
-    #             mean2[j,i] = mean2[i,j]
-    #     np.fill_diagonal(mean2, 0)
-
-    #     return mean2
-
-
     # NOTE JB's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
     def compute_proximity(self, threshold:Number, hardness=1, keep_NaNs=False) -> np.ndarray:
         """
@@ -948,24 +748,6 @@ class PWDistArrayStack(PWArrayStack):
         if keep_NaNs:
             return out
         return np.nan_to_num(out, nan=0, copy=True)
-
-
-    # # TODO for normalization of pairwise distances from JB's code, available in format_FOF_data.py
-    # def normalize(self, ref: np.ndarray, method: str = "MMSF") -> PWDistArrayStack:
-    #     """
-    #     Normalize the stack by different methods while comparing to a reference dataset
-
-    #     MMSF: median-median scaling factor
-
-    #     JB's method based on R(s) yet to be implemented here
-    #     """
-    
-    #     method = method.strip().upper()
-
-    #     if method == "MMSF":
-    #         scaling_factor = np.nanmedian(ref) / np.nanmedian(self)
-
-    #         return self[:] * scaling_factor
         
 
     def plot_mean_proximity_proportion(self, thresholds:list, hardness=1, path_to_save: str = ""):
@@ -1077,7 +859,7 @@ class PWDistArrayStack(PWArrayStack):
 
 
 
-class PWProxArrayStack(PWArrayStack):
+class PWProxArrayStack(_PWArrayStack):
     """
     Stack of flattened pairwise *proximity* vectors.
 
