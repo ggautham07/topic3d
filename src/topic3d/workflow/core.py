@@ -46,7 +46,7 @@ def readable_duration(duration:Number):
 ##################################################################################################################
 
 
-def initialize_simple(params: dict, dir_results: str, path_to_data: str | list):
+def initialize(params: dict, dir_results: str, path_to_data: str | list):
     """
     Initialize a run directory and logging for a CLI invocation (simple layout).
 
@@ -115,82 +115,6 @@ def initialize_simple(params: dict, dir_results: str, path_to_data: str | list):
         logging.info(f"    {key}: {summary[key]}")
     if save_flag:
         json.dump(summary, open(path.join(dir_training, "summary.json"), mode="x"), indent=4)
-
-    return summary
-
-
-def initialize_full(params: dict, dir_results: str, path_to_data: str, tag: str = None, save_logs=True):
-    """
-    Initialize a run directory and logging for a CLI invocation (structured layout).
-
-    Compared to :func:`initialize_simple`, this function organizes outputs under::
-
-        <dir_results>/<tag>/<pattern>/<uid>/
-
-    where ``pattern`` highlights key hyperparameters (currently number of components
-    and proximity threshold).
-
-    Parameters
-    ----------
-    params : dict
-        Decomposition/training parameters (must include ``num_components`` and
-        ``proximity_threshold`` keys).
-    dir_results : str
-        Existing directory where outputs are written.
-    path_to_data : str
-        Input dataset path.
-    tag : str, optional
-        Label used to group runs. Defaults to the dataset filename stem.
-    save_logs : bool, default=True
-        If True, write logs to ``logs.log`` in the run directory; otherwise log only
-        to the console.
-
-    Returns
-    -------
-    dict
-        Run summary including ``uid``, ``path_to_training`` and (optionally) ``path_to_log``.
-    """
-
-    assert type(params) == dict
-    tag = "".join(path.basename(path_to_data).split(".")[:-1]) if tag is None else tag.strip()
-    assert type(tag) == str
-    assert type(dir_results) == str and path.isdir(dir_results)
-    assert type(save_logs) == bool
-
-    # Setting a unique ID for the training
-    uid = str(uuid4())[:6]
-    
-    # TODO set folder pattern to highlight only most important parameters OR have a function to list and pull trainings
-    dir_pattern = f"{params['num_components']:02d}-components_threshold={params['proximity_threshold']}"
-    dir_training = path.join(dir_results, tag, dir_pattern, f"{uid}")
-    makedirs(dir_training, exist_ok=False)
-
-    if save_logs:
-        log_file = path.join(dir_training, f"logs.log")    # Setup the log file path (in the same folder as training)
-        setup_log(log_file)     # Setup logging to file and console
-    else:
-        setup_log_simple()
-        dir_training = ""
-        log_file = ""
-
-    logging.info("-" * 50)
-    if save_flag:
-        logging.info(f"[{uid}] Will save run outputs to: {dir_training}")
-    else:
-        logging.info(f"[{uid}] Results/logs will not be saved (no valid dir_results)")
-
-    summary = params.copy()
-    summary.update({"uid": uid,
-                    "path_to_data": path_to_data,
-                    "tag": tag,
-                    "path_to_training": dir_training,})
-    if save_logs:
-        summary.update({"path_to_log": log_file})
-
-    logging.info(f"Settings summary for run: {uid}")
-    for key in summary.keys():
-        logging.info(f"    {key}: {summary[key]}")
-    json.dump(summary, open(path.join(dir_training, "summary.json"), mode="x"), indent=4)
 
     return summary
 
@@ -309,26 +233,34 @@ def train_LDA_model(params: dict,
     except Exception as err:
         logging.error(f"[{uid}] Error occurred during training: {str(err)}")
 
-    try:
-        summary = kwargs.get("summary", params)
-        summary.update({"test_data": flag_test,
-                        "model_num_iterations": model.n_iter_,
-                        "model_score": model_score,
-                        "model_perplexity_train": model.bound_,
-                        })
-        if flag_test:
-            summary["model_perplexity_test"] = model_test_perplexity
-        if wflag:
-            results.save(dir_to_save=dir_to_save)
-            results.plot_components(ordered=False, path_to_save=path.join(dir_to_save, "components.png"))
-            results.plot_components(ordered=True, path_to_save=path.join(dir_to_save, "components_sorted.png"))
-            results.plot_decomposition(path_to_save=path.join(dir_to_save, "decomposition.png"), cmap="Blues")
-            logging.info(f"[{uid}] Saved results in {dir_to_save}")
-        else:
-            print(*summary, sep="\n")
-    except Exception as err:
-        logging.error(f"[{uid}] Error occurred during the compiling and saving of results: {str(err)}")
-        raise
+    time_elapsed = readable_duration(perf_counter() - time_start)
+    logging.info(f"[{uid}] Completed in {time_elapsed}")
+
+    return model
+
+
+# TODO
+def evaluate_LDA_model(model, data):
+        # try:
+    #     summary = kwargs.get("summary", params)
+    #     summary.update({"test_data": flag_test,
+    #                     "model_num_iterations": model.n_iter_,
+    #                     "model_score": model_score,
+    #                     "model_perplexity_train": model.bound_,
+    #                     })
+    #     if flag_test:
+    #         summary["model_perplexity_test"] = model_test_perplexity
+    #     if wflag:
+    #         results.save(dir_to_save=dir_to_save)
+    #         results.plot_components(ordered=False, path_to_save=path.join(dir_to_save, "components.png"))
+    #         results.plot_components(ordered=True, path_to_save=path.join(dir_to_save, "components_sorted.png"))
+    #         results.plot_decomposition(path_to_save=path.join(dir_to_save, "decomposition.png"), cmap="Blues")
+    #         logging.info(f"[{uid}] Saved results in {dir_to_save}")
+    #     else:
+    #         print(*summary, sep="\n")
+    # except Exception as err:
+    #     logging.error(f"[{uid}] Error occurred during the compiling and saving of results: {str(err)}")
+    #     raise
 
     # logging.info(f"[{uid}] Starting coherence computations for the trained model using training data")
     # try:
@@ -355,11 +287,11 @@ def train_LDA_model(params: dict,
     #     logging.error(f"[{uid}] Error occurred during coherence computation: {str(err)}")
     #     raise
     # logging.info(f"[{uid}] Finished coherence computations for the trained model")
+    return
 
-    time_elapsed = readable_duration(perf_counter() - time_start)
-    logging.info(f"[{uid}] Completed in {time_elapsed}")
 
-    return model
+def save_results(after):
+    return
 
 
 def decompose_data(data: np.ndarray, model: LatentDirichletAllocation):
@@ -374,3 +306,7 @@ def decompose_data(data: np.ndarray, model: LatentDirichletAllocation):
     decomposition = model.transform(data)
 
     return model.components_, decomposition
+
+
+def write_results(model):
+    return

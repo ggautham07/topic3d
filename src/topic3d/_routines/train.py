@@ -67,11 +67,11 @@ def main():
 
     # Step 7: Run LDA decomposition on the processed data
     _ = train_LDA_model(params=params,
-                  data_train=data_train,
-                  data_test=data_test,
-                  dir_to_save=args_full["path_to_training"],
-                  summary=args_full,
-                  uid=args_full.get("uid", None))
+                        data_train=data_train,
+                        data_test=data_test,
+                        dir_to_save=args_full["path_to_training"],
+                        summary=args_full,
+                        uid=args_full.get("uid", None))
     
 
 if __name__ == "__main__":

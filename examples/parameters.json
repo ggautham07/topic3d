@@ -1,0 +1,13 @@
+{
+    "train": {
+        "num_components": 10,
+        "max_iter": 100,
+        "learning_method": "batch",
+        "random_state": 42
+    },
+
+    "decompose": {
+        "model_file": "",
+        "data_file": ""
+    }
+}

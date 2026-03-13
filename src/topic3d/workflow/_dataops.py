@@ -11,7 +11,6 @@ import h5py
 from scipy.spatial.distance import squareform
 
 from topic3d.datatypes import CoordsArrayStack, PWDistArrayStack
-from temp.datamgrs import ProcessedData
 
 
 # NOTE legacy function to load data
@@ -104,6 +103,7 @@ def load_model_file(path_to_file: str):
     assert path.isfile(path_to_file)
 
     return jl.load(path_to_file)
+
 
 
 # TODO update normalisation and imputed parts of code from branch cines - cines/code/perform_decomposition.py

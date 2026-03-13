@@ -24,7 +24,7 @@ Dependencies:
 
 from topic3d.workflow._parsers import parse_cli_arguments_simple
 from topic3d.workflow._dataops import load_data_file, load_model_file
-from topic3d.workflow.core import initialize_simple, train_LDA_model
+from topic3d.workflow.core import initialize, decompose_data
 
 
 def main():
@@ -37,24 +37,18 @@ def main():
     params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here
 
     # Step 3: Load data and using internal workflow API
-    data_train = None if args.data_train_file is None else load_data_file(path_to_file=args.data_train_file)
-    data_test = None if args.data_test_file is None else load_data_file(path_to_file=args.data_test_file)
-    existing_model = None if args.model_file is None else load_model_file(args.model_file)
+    data = load_data_file(path_to_file=args.data_file)
+    existing_model = load_model_file(args.model_file)
 
     # Step 4: Initialize run metadata and output directories if needed
-    args_full = initialize_simple(params=params,
+    args_full = initialize(params=params,
                                   dir_results=args.results_dir,
-                                  path_to_data=[args.data_train_file, args.data_test_file],)
+                                  path_to_data=[args.data_file],)
 
     # Step 5: Run LDA decomposition on the processed data
-    _ = train_LDA_model(params=params,
-                  data_train=data_train,
-                  data_test=data_test,
-                  model=existing_model,
-                  dir_to_save=args_full["path_to_training"],
-                  summary=args_full,
-                  uid=args_full.get("uid", None))
-    
+    _, _ = decompose_data(data=data,
+                          model=existing_model)
+
 
 if __name__ == "__main__":
     main()

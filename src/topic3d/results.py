@@ -744,7 +744,7 @@ class Topic3DResult:
         return embedding_df
 
 
-
+# TODO
 class Topic3DResultCollection():
     
     def __init__(self, list):

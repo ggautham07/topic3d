@@ -42,6 +42,7 @@ from typing import Iterable
 from numbers import Number
 
 import numpy as np
+import pandas as pd
 from scipy.spatial.distance import squareform, pdist
 from scipy.linalg import issymmetric
 
@@ -52,6 +53,56 @@ from . import visualization as vzl
 # =============================================================================
 # CLASSES
 # =============================================================================
+
+
+class CoreTraceTable():
+
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def _extract_header_row_from_fof(full_seq:str, sub_seq:str) -> list:
+        """
+        Internal function used to extract header rows from Fish Omics Format (FOF) data
+        
+        Finds the first occurrence of sub_seq in full_seq and splits it at the first newline
+        """
+
+        return full_seq[full_seq.index(sub_seq):].split("\n", maxsplit=1)
+    
+
+    def _extract_traces_from_fof(self) -> np.ndarray:
+        """
+        Extract trace data from a loaded FOF-CT table and reformat into a 3D NumPy array.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (num_traces, num_barcodes, 3) containing X, Y, Z coordinates.
+        
+        Examples
+        --------
+        >>> traces = raw_data._extract_traces_from_fof()
+        """
+
+        traces = np.empty((self.num_traces, self.num_bc, 3))
+        traces[:] = np.nan
+        # create the trace from the coordinates
+        for j, curr_trace_id in enumerate(self.trace_ids):
+            curr_data = self.library[self.library["Trace_ID"] == curr_trace_id]
+            barcodes = [self.bc_ids[x] for x in curr_data["Chrom_Start"].to_list()]
+            coords = curr_data[["X", "Y", "Z"]].to_numpy()
+            traces[j, barcodes] = coords[:]
+        
+        return traces
+    
+
+    def save():
+        pass
+
+
+    def process():
+        return
 
 
 class CoordsArrayStack(np.ndarray):
