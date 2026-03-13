@@ -32,7 +32,7 @@ Dependencies:
 
 from topic3d.workflow._parsers import parse_cli_arguments_full
 from topic3d.workflow._dataops import load_data_file, prepare_proximity_data, split_proximity_data
-from topic3d.workflow.training import initialize_full, decompose
+from topic3d.workflow.core import initialize_full, train_LDA_model
 
 
 def main():
@@ -66,7 +66,7 @@ def main():
                                                  uid=args_full.get("uid", None))
 
     # Step 7: Run LDA decomposition on the processed data
-    _ = decompose(params=params,
+    _ = train_LDA_model(params=params,
                   data_train=data_train,
                   data_test=data_test,
                   dir_to_save=args_full["path_to_training"],

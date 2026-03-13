@@ -24,7 +24,7 @@ Dependencies:
 
 from topic3d.workflow._parsers import parse_cli_arguments_simple
 from topic3d.workflow._dataops import load_data_file, load_model_file
-from topic3d.workflow.training import initialize_simple, decompose
+from topic3d.workflow.core import initialize_simple, train_LDA_model
 
 
 def main():
@@ -47,7 +47,7 @@ def main():
                                   path_to_data=[args.data_train_file, args.data_test_file],)
 
     # Step 5: Run LDA decomposition on the processed data
-    _ = decompose(params=params,
+    _ = train_LDA_model(params=params,
                   data_train=data_train,
                   data_test=data_test,
                   model=existing_model,
