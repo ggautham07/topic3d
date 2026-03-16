@@ -10,6 +10,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=False)
 
     # Register subcommands
+    subparsers.add_parser("runall", help="Train an LDA model with the data and decompose it")
     subparsers.add_parser("train", help="Train an LDA model with data")
     subparsers.add_parser("decompose", help="Decompose data using a trained LDA model")
 
@@ -19,3 +20,7 @@ def main():
         run_train(remaining_args)
     elif args.command == "decompose":
         run_decompose(remaining_args)
+    elif args.command == "runall":
+        run_all(remaining_args)
+    else:
+        raise ValueError

@@ -14,6 +14,8 @@ The functions are intentionally lightweight wrappers around the core API.
 
 from os import path, makedirs
 import logging
+from io import StringIO
+from contextlib import redirect_stdout
 from uuid import uuid4
 from time import perf_counter
 from numbers import Number
@@ -24,7 +26,7 @@ from sklearn.decomposition import LatentDirichletAllocation
 
 from topic3d.results import Topic3DResult
 
-from ._logging import setup_log, setup_log_simple
+from ._logging import setup_log, setup_log_simple, setup_log_simple2
 
 
 # To display durations in seconds in a more readable format
@@ -119,10 +121,22 @@ def initialize(params: dict, dir_results: str, path_to_data: str | list):
     return summary
 
 
+def _check_proximity_data(data):
+    assert isinstance(data, np.ndarray)
+    assert data.ndim == 2
+    dim = int(np.ceil(np.sqrt(data.shape[-1] * 2)))
+    assert dim * (dim-1) == data.shape[-1] * 2  # ensure that vector can be squareformed
+    assert np.all(~np.isnan(data))
+    assert np.all(data >= 0)
+
+
+def _check_LDA_model(model):
+    assert isinstance(model, LatentDirichletAllocation)
+
+
 def train_LDA_model(params: dict,
                     data_train: np.ndarray, data_test: np.ndarray = None,
                     model: LatentDirichletAllocation = None,
-                    dir_to_save: str = "",
                     **kwargs):
     """
     Train an LDA model on pairwise proximity data.
@@ -167,48 +181,45 @@ def train_LDA_model(params: dict,
     """
     
     assert isinstance(params, dict)
-    # TODO proximity data check assertions as a function
-    assert isinstance(data_train, np.ndarray) and data_train.ndim == 2
-    dim = int(np.ceil(np.sqrt(data_train.shape[-1] * 2)))
-    assert dim * (dim-1) == data_train.shape[-1] * 2  # ensure that vector can be squareformed
-    flag_test = False
-    if not (data_test is None):
-        assert isinstance(data_test, np.ndarray) and data_test.ndim == 2
-        dim = int(np.ceil(np.sqrt(data_test.shape[-1] * 2)))
-        assert dim * (dim-1) == data_test.shape[-1] * 2  # ensure that vector can be squareformed
-        flag_test = True
+    existing_log = False
+    if kwargs.get("logger") is None:
+        setup_log_simple2(name="training-logger")
+        logger = logging.getLogger("training-logger")
+    else:
+        assert isinstance(kwargs.get("logger"), logging.Logger)
+        logger = kwargs["logger"]
+        existing_log = True
+    
+    _check_proximity_data(data_train)
+    logger.info("Training data passed conformity checks")
+    # flag_test = False
+    # if not (data_test is None):
+    #     _check_proximity_data(data_test)
+    #     logging.info("Testing data passed conformity checks")
+    #     flag_test = True
     if not (model is None):
-        assert isinstance(model, LatentDirichletAllocation)
+        _check_LDA_model(model)
+        logger.info(f"[{uid}] Loaded LDA model")
         flag_exising_model = True
     else:
         flag_exising_model = False
-    assert isinstance(dir_to_save, str)
-    wflag = False
-    if len(dir_to_save) > 0:
-        assert path.isdir(dir_to_save)  # directory must be created in initialization of training with unique ID
-        wflag = True
 
     uid = kwargs.get("uid", "no-uid")
     if uid is None:
         uid = "no-uid"
 
     if flag_exising_model:
-        logging.info("Using existing LDA model loaded from the given path")
+        logger.info("Using existing LDA model loaded from the given path")
     else:
-        logging.info("No existing model supplied. New LDA model will be created")
-
-    # if flag_test:
-    #     logging.info("Testing data OK")
-    # else:
-    #     logging.info("Improper or no testing data supplied")
+        logger.info("No existing model supplied. New LDA model will be created")
 
     # instantiate the LDA model
-    logging.info(f"[{uid}] Getting training ready in {dir_to_save}")
     if not flag_exising_model:
+        logging.info(f"[{uid}] Initializing LDA model")
         try:
             model = LatentDirichletAllocation(n_components=params["num_components"],
                                               max_iter=params["max_iter"],
-                                              evaluate_every=10 if params["evaluate_perplexity"] else -1,
+                                              evaluate_every=1 if params["evaluate_perplexity"] else -1,
                                               learning_method=params["learning_method"],
                                               batch_size=params["batch_size"],
                                               random_state=params["random_state"],
@@ -220,27 +231,36 @@ def train_LDA_model(params: dict,
     # performing the training and transformation of data to get results
     try:
         logging.info(f"[{uid}] Training LDA model...")
-        # logging.info(f"[{uid}] Decomposing data based on existing LDA model...")
         time_start = perf_counter()
-            # decomposition = model.transform(data_test)
-            # model_score = model.score(data_test)
-            # model_perp_on_data = model.perplexity(data_test)
-        model = model.fit(data_train)
-        model_score = model.score(data_train)
-        if flag_test:
-            model_test_perplexity = model.perplexity(data_test)
-        logging.info(f"[{uid}] Training finished successfully")
+        capt_out = StringIO()
+        with redirect_stdout(capt_out):
+            model = model.fit(data_train)
+        output = capt_out.getvalue()
+        time_elapsed = readable_duration(perf_counter() - time_start)
+        logging.info(f"[{uid}] Training finished successfully in {time_elapsed}")
     except Exception as err:
         logging.error(f"[{uid}] Error occurred during training: {str(err)}")
 
-    time_elapsed = readable_duration(perf_counter() - time_start)
-    logging.info(f"[{uid}] Completed in {time_elapsed}")
+    # TODO close_log function in _logging.py
+    if not existing_log:
+        for handler in logger.handlers[:]:
+            handler.close()
+            logger.removeHandler(handler)
 
-    return model
+    if params["evaluate_perplexity"]:
+        term = "perplexity: "
+        perplexity_over_training = [float(line[line.find(term)+len(term):]) for line in output.splitlines()]
+        return model, perplexity_over_training
+    else:
+        return model
 
 
 # TODO
 def evaluate_LDA_model(model, data):
+    # model_score = model.score(data_train)
+    # mode_train_perplexity = model.bound_
+    # if flag_test:
+    # model_test_perplexity = model.perplexity(data_test)
         # try:
     #     summary = kwargs.get("summary", params)
     #     summary.update({"test_data": flag_test,
@@ -294,15 +314,12 @@ def save_results(after):
     return
 
 
-def decompose_data(data: np.ndarray, model: LatentDirichletAllocation):
+def decompose_data(data: np.ndarray, model: LatentDirichletAllocation, **kwargs):
 
-    # TODO proximity data check assertions as a function
-    assert isinstance(data, np.ndarray) and data.ndim == 2
-    dim = int(np.ceil(np.sqrt(data.shape[-1] * 2)))
-    assert dim * (dim-1) == data.shape[-1] * 2  # ensure that vector can be squareformed
-    
-    assert isinstance(model, LatentDirichletAllocation)
+    _check_proximity_data(data)
+    _check_LDA_model(model)
 
+    # logging.info(f"[{uid}] Decomposing data based on existing LDA model...")
     decomposition = model.transform(data)
 
     return model.components_, decomposition

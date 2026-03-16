@@ -543,6 +543,7 @@ class Topic3DResult:
         >>> model.plot_decomposition(path_to_save="decomposition.svg")
         """
 
+        from matplotlib.ticker import MaxNLocator
         import seaborn as sns
 
         wflag = self._set_figsave_flag(path_to_save)
@@ -550,12 +551,37 @@ class Topic3DResult:
         fig = plt.figure(figsize=(8, 10), dpi=300)
         ax = fig.add_subplot(1, 1, 1)
 
-        reprez = self.compute_representativity(threshold=(1 / self.num_components) + 0.1)
-        idxs = np.argsort(reprez)[::-1]
+        if ordered:
+            reprez = self.compute_representativity(threshold=(1 / self.num_components) + 0.1)
+            idxs_reprez = np.argsort(reprez)[::-1]
+            weights_by_reprez = self.decomposition[:, idxs_reprez]
+            idxs_maxval = np.argmax(weights_by_reprez, axis=1)
+            weights_ordered = np.empty((0, self.num_components), dtype=weights_by_reprez.dtype)
+            idxs_cells_ordered = [] 
+            for n in range(self.num_components):
+                selection = weights_by_reprez[idxs_maxval == n, :]
+                idxs_selection_sorted = np.argsort(selection[:, n])[::-1]
+                weights_ordered = np.concatenate((weights_ordered, selection[idxs_selection_sorted, :]),
+                                                 axis=0)
+                idxs_cells_ordered.extend(idxs_selection_sorted)
 
-        sns.heatmap(self.decomposition[:, idxs] if ordered else self.decomposition, cmap=cmap, ax=ax)
-        plt.xlabel("Topic #")
-        plt.ylabel("Proximity matrix #")
+        def format_fn(tick_val, tick_pos):
+            if int(tick_val) in range(len(idxs_cells_ordered)):
+                return idxs_cells_ordered[int(tick_val)]
+            else:
+                return ""
+
+        sns.heatmap(weights_ordered if ordered else self.decomposition,
+                    vmin=0,
+                    vmax=1,
+                    cmap=cmap,
+                    ax=ax,
+                    xticklabels=idxs_reprez if ordered else sorted(idxs_reprez),
+                    cbar_kws={"shrink": 0.6, "label": "probability"})
+        ax.yaxis.set_major_formatter(format_fn)
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+        plt.xlabel("CFM #", labelpad=10)
+        plt.ylabel("Cell #", labelpad=10)
 
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
