@@ -80,7 +80,10 @@ def initialize(params: dict, dir_results: str, path_to_data: str | list):
     assert type(params) == dict
     assert type(dir_results) == str
     try:
-        assert path.isdir(dir_results.strip("###"))
+        if dir_results.endswith("###"):
+            assert path.isdir(dir_results.strip("###"))
+        else:
+            assert path.isdir(path.dirname(dir_results))
         save_flag = True
     except AssertionError:
         print("Directory to save results not specified or found. Results and logs will not be saved.")
@@ -353,10 +356,14 @@ def save_results(model: LatentDirichletAllocation,
     results = Topic3DResult(model=model,
                             decomposition=decomposition)
     results.save(dir_to_save=dir_to_save)
-    results.plot_CFMs(ordered=False, path_to_save=path.join(dir_to_save, "CFMs.svg"))
-    results.plot_CFMs(ordered=True, path_to_save=path.join(dir_to_save, "CFMs_ordered.svg"))
+    results.plot_CFMs(ordered=False, path_to_save=path.join(dir_to_save, "CFMs.png"))
+    results.plot_CFMs(ordered=True, path_to_save=path.join(dir_to_save, "CFMs_ordered.png"))
+    results.plot_decomposition(ordered=False,
+                               path_to_save=path.join(dir_to_save, "decomposition.png"),
+                               cmap="Blues")
     results.plot_decomposition(ordered=True,
-                               path_to_save=path.join(dir_to_save, "decomposition.svg"), cmap="Blues")
+                               path_to_save=path.join(dir_to_save, "decomposition_ordered.png"),
+                               cmap="Blues")
     
     logging.info(f"[{uid}] Saved results in {dir_to_save}")
 

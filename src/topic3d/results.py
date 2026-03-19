@@ -539,34 +539,38 @@ class Topic3DResult:
 
         if ordered:
             reprez = self.compute_CFM_representativity(weight_threshold=(1 / self.num_CFMs) + 0.1)
-            idxs_reprez = np.argsort(reprez)[::-1]
-            weights_by_reprez = self.decomposition[:, idxs_reprez]
-            idxs_maxval = np.argmax(weights_by_reprez, axis=1)
-            weights_ordered = np.empty((0, self.num_CFMs), dtype=weights_by_reprez.dtype)
-            idxs_cells_ordered = [] 
-            for n in range(self.num_CFMs):
-                selection = weights_by_reprez[idxs_maxval == n, :]
-                idxs_selection_sorted = np.argsort(selection[:, n])[::-1]
-                weights_ordered = np.concatenate((weights_ordered, selection[idxs_selection_sorted, :]),
+            idxs_reprez_desc = np.argsort(reprez)[::-1]
+            weights_reorg_init = self.decomposition[:, idxs_reprez_desc]
+            idxs_maxval_by_trace = np.argmax(weights_reorg_init, axis=1)
+            weights_ordered = np.empty((0, self.num_CFMs), dtype=weights_reorg_init.dtype)
+            idxs_traces_new_order = [] 
+            for i in range(len(idxs_reprez_desc)):
+                selection = weights_reorg_init[idxs_maxval_by_trace == i, :]
+                idxs_selection_ordered = np.argsort(selection[:, i])[::-1]
+                weights_ordered = np.concatenate((weights_ordered, selection[idxs_selection_ordered, :]),
                                                  axis=0)
-                idxs_cells_ordered.extend(idxs_selection_sorted)
+                idxs_traces_new_order.extend(idxs_selection_ordered)
 
-        def format_fn(tick_val, tick_pos):
-            if int(tick_val) in range(len(idxs_cells_ordered)):
-                return idxs_cells_ordered[int(tick_val)]
-            else:
-                return ""
+            def format_fn(tick_val, tick_pos):
+                if int(tick_val) in range(len(idxs_traces_new_order)):
+                    return idxs_traces_new_order[int(tick_val)]
+                else:
+                    return ""
 
         sns.heatmap(weights_ordered if ordered else self.decomposition,
                     vmin=0, vmax=1,
                     cmap=cmap,
                     ax=ax,
-                    xticklabels=idxs_reprez if ordered else sorted(idxs_reprez),
+                    xticklabels=idxs_reprez_desc if ordered else "auto",
                     cbar_kws={"shrink": 0.6, "label": "probability"})
-        ax.yaxis.set_major_formatter(format_fn)
-        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+        if ordered:
+            yticks = ax.get_yticks()
+            labels = [idxs_traces_new_order[int(round(t))] for t in yticks]
+            ax.set_yticklabels(labels)
+        #     ax.yaxis.set_major_formatter(format_fn)
+        #     ax.yaxis.set_major_locator(MaxNLocator(nbins="auto", integer=True))
         plt.xlabel("CFM #", labelpad=10)
-        plt.ylabel("Cell #", labelpad=10)
+        plt.ylabel("Trace #", labelpad=10)
 
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
@@ -755,15 +759,77 @@ class Topic3DResult:
         return embedding_df
 
 
-# TODO
-class Topic3DModelCollection(list):
+class Topic3DModelPool():
     
-    def __init__(self, trained_models_list: list):
-        self.models = [jl.load(model_fp) for model_fp in trained_models_list]
+    def __init__(self, model_file_paths: list):
+        self.models = [jl.load(model_fp) for model_fp in model_file_paths]
         self.CFMs_by_model = [model.components_ for model in self.models]
         self.num_CFMs_by_model = np.asarray([len(CFMs) for CFMs in self.CFMs_by_model])
 
-    def plot_mean_perplexity_by_num_CFMs(self, path_to_save: str = ""):
+
+    @staticmethod
+    def _get_model_perplexity(model):
+        return model.bound_
+
+
+    def rank_models(self, by="coherence", data_used: np.ndarray = None):
+        """
+        Rank models by coherence or perplexity.
+        """
+
+        assert isinstance(by, str) and by in ["coherence", "perplexity"]
+        # TODO common proximity data checking function, or FOF loader everywhere
+        if by == "coherence":
+            assert isinstance(data_used, np.ndarray) and data_used.ndim in [2, 3]
+
+        if by == "coherence":
+            scores = np.asarray([np.mean(Topic3DResult._compute_coherence_npmi_cos(components=model.components_,
+                                                                                   data_used=data_used)) \
+                                                                                    for model in self.models])
+        elif by == "perplexity":
+            scores = np.asarray([self._get_model_perplexity(model) for model in self.models])
+
+        return np.asarray(self.models)[np.argsort(scores) if by=="perplexity" else np.argsort(scores)[::-1]]
+
+
+    def find_best_model(self, by="coherence", data_used: np.ndarray = None):
+        """
+        Find the best model by coherence or perplexity.
+        """
+
+        if by == "coherence":
+            return self.rank_models(by=by, data_used=data_used)[0]
+        elif by == "perplexity":
+            return self.rank_models(by=by)[0]
+    
+
+    def rank_num_CFMs(self, by="coherence", data_used: np.ndarray = None):
+        """
+        Rank models by coherence or perplexity
+        """
+        
+        assert isinstance(by, str) and by in ["coherence", "perplexity"]
+        
+        num_CFMs_unique = np.unique(self.num_CFMs_by_model)
+        scores = []
+        for n in num_CFMs_unique:
+            idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
+            if by == "coherence":
+                scores.append(np.mean([Topic3DResult._compute_coherence_npmi_cos(components=self.models[i].components_,
+                                                                                 data_used=data_used) \
+                                                                                    for i in idxs_reqd]))
+            elif by == "perplexity":
+                scores.append(np.mean([self._get_model_perplexity(self.models[i]) for i in idxs_reqd]))
+
+        return num_CFMs_unique[np.argsort(scores) if by=="perplexity" else np.argsort(scores)[::-1]]
+
+
+    def find_best_num_CFMs(self, data_used: np.ndarray):
+
+        return self.rank_num_CFMs(by="coherence", data_used=data_used)[0]
+
+
+    def plot_mean_perplexity_vs_num_CFMs(self, path_to_save: str = ""):
         
         num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
         perplexities = np.asarray([model.bound_ for model in self.models])
@@ -782,47 +848,84 @@ class Topic3DModelCollection(list):
         ax.set_xlabel("# CFMs")
         ax.set_ylabel("mean perplexity")
         
-        if isinstance(path_to_save, str):
+        if isinstance(path_to_save, str) and len(path_to_save) > 0:
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
         return fig
 
 
-    def plot_mean_coherence_by_num_CFMs(self, data: np.ndarray, method: str = "npmi", path_to_save: str = ""):
+    def plot_mean_coherence_vs_num_CFMs(self, data: np.ndarray, method: str = "npmi", path_to_save: str = ""):
         
         num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
 
-        coherence_all = []
-        for CFMs in self.CFMs_by_model:
-            coherence_all.append(Topic3DResult._compute_coherence_npmi_cos(components=CFMs,
-                                                                           data_used=data,
-                                                                           num_top_pixels=20))
-        coherences_means = []
-        coherences_stds = []
-        for n in num_CFMs_by_model_unique:
-            cohrs = coherence_all[self.num_CFMs_by_model == n]
-            coherences_means.append(np.mean(cohrs))
-            coherences_stds.append(np.std(cohrs))
+        fig, ax = plt.subplots()
+        num_top_px = [10, 20, 30, 40]
+
+        for n_px in num_top_px:
+
+            coherence_all = []
+            for CFMs in self.CFMs_by_model:
+                c, _ = Topic3DResult._compute_coherence_npmi_cos(components=CFMs,
+                                                                data_used=data,
+                                                                num_top_pixels=n_px)
+                coherence_all.append(c)
+            coherences_means = []
+            coherences_stds = []
+            for n in num_CFMs_by_model_unique:
+                idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
+                cohrs = []
+                for i in idxs_reqd:
+                    cohrs.extend(coherence_all[i])
+                coherences_means.append(np.mean(cohrs))
+                coherences_stds.append(np.std(cohrs))
+
+            ax.errorbar(x=num_CFMs_by_model_unique,
+                        y=coherences_means,
+                        yerr=coherences_stds,
+                        capsize=2.5,
+                        label=f"top {n_px} pixels")
         
+        ax.set_xlabel("# CFMs")
+        ax.set_ylabel("mean NPMI coherence")
+        plt.legend()
+        
+        if isinstance(path_to_save, str) and len(path_to_save) > 0:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
+
+
+    @staticmethod
+    def count_empty_CFMs(CFMs):
+
+        counter = 0
+        for l in range(len(CFMs)):
+            if np.allclose(CFMs[l], 0, atol=1e-1):
+                counter += 1
+        
+        return counter
+
+
+    def plot_mean_empty_vs_num_CFMs(self, path_to_save=""):
+
+        num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
+        mean_empty = []
+        for n in num_CFMs_by_model_unique:
+            CFMs_by_model_reqd = [self.CFMs_by_model[i] for i in np.nonzero(self.num_CFMs_by_model == n)[0]]
+            mean_empty.append(np.mean([self.count_empty_CFMs(CFMs) / len(CFMs) for CFMs in CFMs_by_model_reqd]))
+
         fig, ax = plt.subplots()
         ax.errorbar(x=num_CFMs_by_model_unique,
-                    y=coherences_means,
-                    yerr=coherences_stds,
+                    y=mean_empty,
+                    yerr=mean_empty,
                     capsize=2.5)
         ax.set_xlabel("# CFMs")
-        ax.set_ylabel("mean perplexity")
+        ax.set_ylabel("mean empty CFMs")
         
-        if isinstance(path_to_save, str):
+        if isinstance(path_to_save, str) and len(path_to_save) > 0:
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
         return fig
-
-
-    def plot_mean_empty_by_num_CFMs(self):
-
-        num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
-
-        return
 
 
     # TODO    

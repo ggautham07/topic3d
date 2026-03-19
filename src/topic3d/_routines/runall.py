@@ -29,10 +29,10 @@ Dependencies:
 - topic3d.workflow.training
 """
 
-
+from os import path
 from topic3d.workflow._parsers import parse_cli_arguments_runall, read_params_json
 from topic3d.workflow._dataops import load_data_file
-from topic3d.workflow.core import initialize, train_LDA_model, plot_learning_evaluation, decompose_data
+from topic3d.workflow.core import initialize, train_LDA_model, plot_learning_evaluation, decompose_data, save_results
 
 
 def main(args_init):
@@ -45,16 +45,13 @@ def main(args_init):
     params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here
     if args.params_file is not None:
         params.update(read_params_json(args.params_file))
-    print(params)
 
     # Step 3: Load data using internal workflow API
     data_train = load_data_file(args.data_train_file)
-    print(data_train.shape, data_train.dtype)
     if args.data_test_file is None:
         data_test = None
     else:
         data_test = load_data_file(args.data_test_file)
-        print(data_test.shape, data_test.dtype)
 
     # Step 4: Initialize run metadata and output directories
     args_full = initialize(params=params,
@@ -80,16 +77,14 @@ def main(args_init):
         model, perp_by_iter = train_LDA_model(params=params,
                                               data_train=data_train,
                                               data_test=data_test,
-                                              dir_to_save=args_full["path_to_training"],
                                               summary=args_full,
                                               uid=args_full.get("uid", None))
         plot_learning_evaluation(perp_by_iter,
-                                 path_to_save=args_full["path_to_training"])
+                                 path_to_save=path.join(args_full["path_to_training"], "perplexity_evolution.png"))
     else:
         model = train_LDA_model(params=params,
                                 data_train=data_train,
                                 data_test=data_test,
-                                dir_to_save=args_full["path_to_training"],
                                 summary=args_full,
                                 uid=args_full.get("uid", None))
     
@@ -99,8 +94,9 @@ def main(args_init):
     components, decomposition = decompose_data(data=data_train,
                                                model=model)
     
-    
-    
+    save_results(model=model,
+                 decomposition=decomposition,
+                 dir_to_save=args_full["path_to_training"])
 
 if __name__ == "__main__":
     main()
