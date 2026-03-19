@@ -2,7 +2,7 @@ import argparse
 
 from .train import main as run_train
 from .decompose import main as run_decompose
-
+from .runall import main as run_all
 
 def main():
 

@@ -1,6 +1,6 @@
+from os import path
 import argparse
 import json
-
 
 # Helper function to parse a single integer or a list of integers
 def parse_num_components(value):
@@ -17,7 +17,7 @@ def parse_num_components(value):
 
 
 # Main function for parsing arguments for topic3d-run and topic3d-run-dask
-def parse_cli_arguments_full(parallelization=False):
+def parse_cli_arguments_legacy(parallelization=False):
     """
     Parse command-line arguments for the full topic decomposition pipeline using topic3d-full-*.
 
@@ -169,10 +169,10 @@ def parse_cli_arguments_full(parallelization=False):
     return parser.parse_args()
 
 
-# Main function for parsing arguments for topic3d-decompose
-def parse_cli_arguments_simple():
+# Main function for parsing arguments for topic3d runall ...
+def parse_cli_arguments_runall(args_init=None):
     """
-    Parse minimal command-line arguments for topic decomposition using topic3d-decompose.
+    Parse command-line arguments for topic decomposition using topic3d runall.
 
     Returns
     -------
@@ -180,15 +180,16 @@ def parse_cli_arguments_simple():
         Parsed command-line arguments as a namespace.
     """
     
-    parser = argparse.ArgumentParser(description="Decompose a single-cell proximity dataset")
+    parser = argparse.ArgumentParser(description="Decompose single-cell proximity data from chromatin tracing\
+                                     experiments using Latent Dirichlet Allocation. CLI for routine topic3d runall")
 
     # ========================
-    # I/O PARAMETERS
+    # FIRST PARSED PARAMETERS
     # ========================
     
     parser.add_argument("--data_train_file",
                         type=str,
-                        required=False,
+                        required=True,
                         help="Path to the training data. Must be a Numpy file",
                         default=None)
     
@@ -206,48 +207,77 @@ def parse_cli_arguments_simple():
 
     parser.add_argument("--results_dir",
                         type=str,
-                        required=False,
+                        required=True,
                         help="Directory in which to store decomposition results",
                         default="")
     
-    # ========================
-    # MODEL PARAMETERS
-    # ========================
-    # TODO add argument to read LDA parameters from a JSON file in which case the arguments below are ignored
+    parser.add_argument("--params_file",
+                         type=str,
+                         required=False,
+                         help="Path to parameters file in JSON format. If passed, parameter command-line arguments will be ignored.")
+    
+    args0, _ = parser.parse_known_args(args_init)
 
-    parser.add_argument("--num_components",
-                        type=int,
-                        required=True,
-                        help="Number of components (single integer)",
-                        metavar="[2-100]",
-                        choices=range(2, 101))
+    if args0.params_file:
+
+        return args0
     
-    parser.add_argument("--max_iter",
-                        type=int,
-                        required=False,
-                        help="Maximum number of training iterations (default=1000)",
-                        metavar="[1-5000]",
-                        choices=range(1, 5001),
-                        default=1000)
-    
-    parser.add_argument("--learning_method",
-                        type=str,
-                        required=False,
-                        help="Model learning method: 'batch' (default) or 'online'",
-                        choices=["batch", "online"],
-                        default="batch")
-    
-    parser.add_argument("--batch_size",
-                        type=int,
-                        required=False,
-                        help="Batch size while using online learning, ignored for batch learning (default=32)",
-                        default=64)
-    
-    parser.add_argument("--random_state",
-                        type=int,
-                        required=False,
-                        help="Set random seed for reproducible model training (default=None)",
-                        default=None)
+    else:
+        
+        # ========================
+        # REMAINING PARAMETERS
+        # ========================
+
+        parser.add_argument("--num_CFMs",
+                            type=int,
+                            required=True,
+                            help="Number of CFMs (single integer)",
+                            metavar="[2-100]",
+                            choices=range(2, 101))
+        
+        parser.add_argument("--max_iter",
+                            type=int,
+                            required=False,
+                            help="Maximum number of training iterations (default=1000)",
+                            metavar="[1-10,000]",
+                            choices=range(1, 10001),
+                            default=500)
+        
+        parser.add_argument("--random_state",
+                            type=int,
+                            required=False,
+                            help="Set random seed for reproducible model training (default=None)",
+                            default=None)
+        
+        parser.add_argument("--learning_method",
+                            type=str,
+                            required=False,
+                            help="Model learning method: 'batch' (default) or 'online'",
+                            choices=["batch", "online"],
+                            default="batch")
+        
+        parser.add_argument("--batch_size",
+                            type=int,
+                            required=False,
+                            help="Batch size while using online learning, ignored for batch learning (default=128)",
+                            default=128)
+        
+        parser.add_argument("--evaluate_learning",
+                            action="store_true",
+                            required=False,
+                            help="Evaluate the perplexity of the model during learning (increases training time)")
+        
+        parser.add_argument("--assess_model_quality",
+                            action="store_true",
+                            required=False,
+                            help="Assess trained model quality using perplexity and NPMI coherence scores")
 
     # Parse and return arguments
-    return parser.parse_args()
+    return parser.parse_args(args_init)
+
+
+def read_params_json(fp):
+
+    assert path.isfile(fp)
+
+    return json.load(open(fp, mode="r"))

@@ -22,7 +22,7 @@ Dependencies:
 """
 
 
-from topic3d.workflow._parsers import parse_cli_arguments_simple
+from topic3d.workflow._parsers import parse_cli_arguments_runall
 from topic3d.workflow._dataops import load_data_file, load_model_file
 from topic3d.workflow.core import initialize, decompose_data
 
@@ -31,7 +31,7 @@ def main():
     """Execute the topic decomposition pipeline based on CLI arguments."""
 
     # Step 1: Parse command-line arguments
-    args = parse_cli_arguments_simple()
+    args = parse_cli_arguments_runall()
 
     # Step 2: Convert Namespace to dict for supplying parameters as required by the API
     params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here

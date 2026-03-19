@@ -80,7 +80,7 @@ def initialize(params: dict, dir_results: str, path_to_data: str | list):
     assert type(params) == dict
     assert type(dir_results) == str
     try:
-        assert path.isdir(dir_results)
+        assert path.isdir(dir_results.strip("###"))
         save_flag = True
     except AssertionError:
         print("Directory to save results not specified or found. Results and logs will not be saved.")
@@ -88,9 +88,11 @@ def initialize(params: dict, dir_results: str, path_to_data: str | list):
 
     # Setting a unique ID for the training
     uid = str(uuid4())[:6]
-    
     if save_flag:
-        dir_training = path.join(dir_results, uid)
+        if dir_results.endswith("/###"):
+            dir_training = dir_results.replace("/###", "/"+str(uid))
+        else:
+            dir_training = dir_results
         makedirs(dir_training, exist_ok=False)
         log_file = path.join(dir_training, f"logs.log")    # Setup the log file path (in the same folder as training)
         setup_log(log_file)     # Setup logging to file and console
@@ -217,9 +219,9 @@ def train_LDA_model(params: dict,
     if not flag_exising_model:
         logging.info(f"[{uid}] Initializing LDA model")
         try:
-            model = LatentDirichletAllocation(n_components=params["num_components"],
+            model = LatentDirichletAllocation(n_components=params["num_CFMs"],
                                               max_iter=params["max_iter"],
-                                              evaluate_every=1 if params["evaluate_perplexity"] else -1,
+                                              evaluate_every=1 if params["evaluate_learning"] else -1,
                                               learning_method=params["learning_method"],
                                               batch_size=params["batch_size"],
                                               random_state=params["random_state"],
@@ -247,9 +249,10 @@ def train_LDA_model(params: dict,
             handler.close()
             logger.removeHandler(handler)
 
-    if params["evaluate_perplexity"]:
+    if params["evaluate_learning"]:
         term = "perplexity: "
-        perplexity_over_training = [float(line[line.find(term)+len(term):]) for line in output.splitlines()]
+        perps = [float(line[line.find(term)+len(term):]) for line in output.splitlines()]
+        perplexity_over_training = dict(zip(range(1, len(perps)+1), perps))
         return model, perplexity_over_training
     else:
         return model
@@ -310,8 +313,20 @@ def evaluate_LDA_model(model, data):
     return
 
 
-def save_results(after):
-    return
+def plot_learning_evaluation(perplexity_by_iter: dict, path_to_save: str = ""):
+    
+    import matplotlib.pyplot as plt
+    
+    fig, ax = plt.subplots()
+    ax.plot(perplexity_by_iter.keys(), perplexity_by_iter.values())
+    ax.set_xlabel("iter #", labelpad=10)
+    ax.set_ylabel("perplexity", labelpad=10)
+
+    if isinstance(path_to_save, str):
+        fig.savefig(path_to_save, bbox_inches="tight")
+        plt.close(fig)
+    else:
+        return fig
 
 
 def decompose_data(data: np.ndarray, model: LatentDirichletAllocation, **kwargs):
@@ -323,6 +338,27 @@ def decompose_data(data: np.ndarray, model: LatentDirichletAllocation, **kwargs)
     decomposition = model.transform(data)
 
     return model.components_, decomposition
+
+
+def save_results(model: LatentDirichletAllocation,
+                 decomposition: np.ndarray,
+                 dir_to_save: str,
+                 **kwargs):
+    
+
+    uid = kwargs.get("uid", "no-uid")
+    if uid is None:
+        uid = "no-uid"
+    
+    results = Topic3DResult(model=model,
+                            decomposition=decomposition)
+    results.save(dir_to_save=dir_to_save)
+    results.plot_CFMs(ordered=False, path_to_save=path.join(dir_to_save, "CFMs.svg"))
+    results.plot_CFMs(ordered=True, path_to_save=path.join(dir_to_save, "CFMs_ordered.svg"))
+    results.plot_decomposition(ordered=True,
+                               path_to_save=path.join(dir_to_save, "decomposition.svg"), cmap="Blues")
+    
+    logging.info(f"[{uid}] Saved results in {dir_to_save}")
 
 
 def write_results(model):

@@ -67,19 +67,11 @@ class Topic3DResult:
         
         self.model = model
         self.decomposition = decomposition
-        self.components = model.components_
-        self.components_norm = self.components / np.sum(self.components, axis=1)[:, np.newaxis]
-        self.num_components = len(self.components)
+        self.CFMs = model.components_
+        self.CFMs_norm = self.CFMs / np.sum(self.CFMs, axis=1)[:, np.newaxis]
+        self.num_CFMs = len(self.CFMs)
         self.num_items = len(self.decomposition)
         self.metadata = kwargs.copy()
-        
-        # # TODO store original dataset indices of the training and testing sets using self.data_idxs = kwargs.get()
-        # self.data_training = self.metadata.get("data_training", None)
-        # if self.data_training is not None:
-        #     assert isinstance(self.data_training, (PWDistArrayStack, np.ndarray))
-        # self.data_testing = self.metadata.get("data_testing", None)
-        # if self.data_testing is not None:
-        #     assert isinstance(self.data_testing, (PWDistArrayStack, np.ndarray))
 
 
     def save(self, dir_to_save:str):
@@ -106,11 +98,8 @@ class Topic3DResult:
         """
         
         with h5py.File(path.join(dir_to_save, "results.h5"), mode="w") as handler:
-            handler.create_dataset(name="components", data=self.components)
+            handler.create_dataset(name="components", data=self.CFMs)
             handler.create_dataset(name="decomposition", data=self.decomposition)
-            # # TODO store original dataset indices of the training and testing sets using self.data_idxs = kwargs.get()
-            # handler.create_dataset(name="data_idxs/training", data=self.data_training)
-            # handler.create_dataset(name="data_idxs/testing", data=self.data_testing)
             for k, v in self.metadata.items():
                 try:
                     handler.attrs[k] = v
@@ -131,7 +120,7 @@ class Topic3DResult:
         return False
 
 
-    def reconstruction(self, normalize=False):
+    def reconstruct_data(self, normalize=False):
         """
         Reconstruct proximity vectors from the components and decomposition matrices.
 
@@ -151,8 +140,8 @@ class Topic3DResult:
         """
 
         if normalize:
-            return self.decomposition @ self.components_norm
-        return self.decomposition @ self.components
+            return self.decomposition @ self.CFMs_norm
+        return self.decomposition @ self.CFMs
     
 
     # TODO multiple methods
@@ -162,7 +151,7 @@ class Topic3DResult:
             return (1 / decomposition.shape[-1]) + 0.1
 
 
-    def compute_representativity(self, threshold: float = None) -> np.ndarray:
+    def compute_CFM_representativity(self, weight_threshold: float = None) -> np.ndarray:
         """
         Compute the representativity of each component across the dataset.
 
@@ -185,12 +174,12 @@ class Topic3DResult:
         array([0.85, 0.92, 0.74, ...])
         """
         
-        if threshold is None:
-            threshold = self._extract_representativity_threshold(self.decomposition)
+        if weight_threshold is None:
+            weight_threshold = self._extract_representativity_threshold(self.decomposition)
         else:
-            assert isinstance(threshold, Number)
+            assert isinstance(weight_threshold, Number)
 
-        return np.mean(self.decomposition >= threshold, axis=0)
+        return np.mean(self.decomposition >= weight_threshold, axis=0)
 
 
     @staticmethod
@@ -324,7 +313,8 @@ class Topic3DResult:
 
 
     # NOTE vectorised version of jb's original code, NEEDS VALIDATION
-    def sort_components(self, threshold: Number = None, return_freqs: bool = False):
+    # TODO ordering by maximum pseudocount
+    def order_CFMs(self, weight_threshold: Number = None):
         """
         Sort components by representativity based on a weight threshold.
 
@@ -348,65 +338,62 @@ class Topic3DResult:
         >>> idxs, freqs = model.sort_components(threshold=0.3, return_freqs=True)
         """
 
-        if threshold is None:
-            threshold = self._extract_representativity_threshold(self.decomposition)
+        if weight_threshold is None:
+            weight_threshold = self._extract_representativity_threshold(self.decomposition)
         else:
-            assert isinstance(threshold, Number)
+            assert isinstance(weight_threshold, Number)
         
-        reprez = self.compute_representativity(threshold)
+        reprez = self.compute_CFM_representativity(weight_threshold)
         idxs = np.argsort(reprez)[::-1]
-        freqs = reprez / self.num_items
 
-        if return_freqs:
-            return idxs, freqs
         return idxs
 
 
-    # TODO figure out a way to have training or testing data ready to compute coherence
-    # def coherence(self, method: str = "all", num_top_pixels : int = None):
-    #     """
-    #     Compute coherence metrics (NPMI, cosine, uMass) for topic components.
+    # TODO split NPMI and cosine
+    def compute_CFM_coherence(self, data: np.ndarray, method: str = "npmi", num_top_pixels: int = None):
+        """
+        Compute coherence metrics (NPMI, cosine, uMass) for topic components.
 
-    #     Parameters
-    #     ----------
-    #     method : str, optional
-    #         Which coherence metric to compute: "npmi-cos", "umass", or "all" (default).
-    #     num_top_pixels : int, optional
-    #         Number of top pixels to use per component. Defaults to 10% of component length.
+        Parameters
+        ----------
+        method : str, optional
+            Which coherence metric to compute: "npmi-cos", "umass", or "all" (default).
+        num_top_pixels : int, optional
+            Number of top pixels to use per component. Defaults to 10% of component length.
 
-    #     Returns
-    #     -------
-    #     tuple
-    #         Coherence scores depending on selected method:
-    #         - If "npmi-cos": (npmi, cosine)
-    #         - If "umass": (umass,)
-    #         - If "all": ((npmi, cosine), umass)
+        Returns
+        -------
+        tuple
+            Coherence scores depending on selected method:
+            - If "npmi-cos": (npmi, cosine)
+            - If "umass": (umass,)
+            - If "all": ((npmi, cosine), umass)
 
-    #     Examples
-    #     --------
-    #     >>> model.coherence(method="npmi-cos")
-    #     """
+        Examples
+        --------
+        >>> model.coherence(method="npmi-cos")
+        """
 
-    #     assert isinstance(method, str) and method.lower() in ["npmi-cos", "umass", "all"]
-    #     assert self.data_training is not None
-    #     if num_top_pixels is None:
-    #         num_top_pixels = self.components.shape[1] // 10
-    #     else:
-    #         isinstance(num_top_pixels, int)
+        assert isinstance(method, str) and method.lower() in ["npmi-cos", "umass", "all"]
+        assert self.data_training is not None
+        if num_top_pixels is None:
+            num_top_pixels = self.CFMs.shape[1] // 10
+        else:
+            isinstance(num_top_pixels, int)
 
-    #     out = []
-    #     if method in ["npmi-cos", "all"]:
-    #         out.append(self._compute_coherence_npmi_cos(components=self.components,
-    #                                                     data_used=self.data_training,
-    #                                                     num_top_pixels=num_top_pixels,
-    #                                                     randomize_data=False))
-    #     if method in ["umass", "all"]:
-    #         out.append(self._compute_coherence_umass(components=self.components,
-    #                                                  data_used=self.data_training,
-    #                                                  num_top_pixels=num_top_pixels,
-    #                                                  randomize_data=False))
+        out = []
+        if method in ["npmi", "cos", "all"]:
+            out.append(self._compute_coherence_npmi_cos(components=self.CFMs,
+                                                        data_used=data,
+                                                        num_top_pixels=num_top_pixels,
+                                                        randomize_data=False))
+        if method in ["umass", "all"]:
+            out.append(self._compute_coherence_umass(components=self.CFMs,
+                                                     data_used=data,
+                                                     num_top_pixels=num_top_pixels,
+                                                     randomize_data=False))
 
-    #     return tuple(out)
+        return tuple(out)
 
 
     # TODO returning mean divergence for decomposition, sorting the matrix by least to most distant?
@@ -436,7 +423,7 @@ class Topic3DResult:
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        pw_divergence = squareform(pdist(self.components, metric=metric))
+        pw_divergence = squareform(pdist(self.CFMs, metric=metric))
 
         if wflag:
             import matplotlib.pyplot as plt
@@ -449,7 +436,7 @@ class Topic3DResult:
             cbar.set_label(f"{metric} distance", labelpad=6)
             ax.xaxis.tick_top()
             ax.xaxis.set_label_position("top")
-            ticks_labels = np.arange(self.num_components)
+            ticks_labels = np.arange(self.num_CFMs)
             ax.set_xticks(ticks=ticks_labels, labels=ticks_labels);
             ax.set_yticks(ticks=ticks_labels, labels=ticks_labels);
             ax.tick_params("x", labelsize=10)
@@ -464,8 +451,8 @@ class Topic3DResult:
 
 
     # TODO add common_cbar in plotting
-    def plot_components(self, normalized: bool = False, ordered: bool = False, 
-                        path_to_save: str = "", form: str = "triangle", cmap: str = "Reds", **kwargs):
+    def plot_CFMs(self, ordered: bool = False, normalized: bool = False,
+                  path_to_save: str = "", form: str = "triangle", cmap: str = "Reds", **kwargs):
         """
         Plot all component matrices as triangular or square heatmaps.
 
@@ -496,17 +483,17 @@ class Topic3DResult:
 
         map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
-        reprez = self.compute_representativity(threshold=kwargs.get("threshold", (1 / self.num_components) + 0.1))
+        reprez = self.compute_CFM_representativity(weight_threshold=kwargs.get("weight_threshold", (1 / self.num_CFMs) + 0.1))
         
         if ordered:
-            idxs = self.sort_components(threshold=kwargs.get("threshold", (1 / self.num_components) + 0.1))
+            idxs = self.order_CFMs(weight_threshold=kwargs.get("threshold", (1 / self.num_CFMs) + 0.1))
             reprez = reprez[idxs]
-            items_to_plot = self.components_norm[idxs,:] if normalized else self.components[idxs,:]
+            items_to_plot = self.CFMs_norm[idxs,:] if normalized else self.CFMs[idxs,:]
         else:
-            items_to_plot = self.components_norm if normalized else self.components
+            items_to_plot = self.CFMs_norm if normalized else self.CFMs
 
-        idxs_comps = np.arange(self.num_components)
-        titles = [f"T{i}  |  $\\rho = ${r*100:.2f}%" \
+        idxs_comps = np.arange(self.num_CFMs)
+        titles = [f"CFM {i}  |  $\\rho = ${r*100:.2f}%" \
                   for i, r in zip(idxs_comps[idxs] if ordered else idxs_comps, reprez)]
         fig = map_form_fn[form](items=items_to_plot,
                                 titles=titles,
@@ -518,7 +505,6 @@ class Topic3DResult:
         return fig
 
 
-    # TODO correct ordering on both axes
     def plot_decomposition(self, ordered: bool = True,
                            path_to_save: str = "", cmap: str = "Blues"):
         """
@@ -552,13 +538,13 @@ class Topic3DResult:
         ax = fig.add_subplot(1, 1, 1)
 
         if ordered:
-            reprez = self.compute_representativity(threshold=(1 / self.num_components) + 0.1)
+            reprez = self.compute_CFM_representativity(weight_threshold=(1 / self.num_CFMs) + 0.1)
             idxs_reprez = np.argsort(reprez)[::-1]
             weights_by_reprez = self.decomposition[:, idxs_reprez]
             idxs_maxval = np.argmax(weights_by_reprez, axis=1)
-            weights_ordered = np.empty((0, self.num_components), dtype=weights_by_reprez.dtype)
+            weights_ordered = np.empty((0, self.num_CFMs), dtype=weights_by_reprez.dtype)
             idxs_cells_ordered = [] 
-            for n in range(self.num_components):
+            for n in range(self.num_CFMs):
                 selection = weights_by_reprez[idxs_maxval == n, :]
                 idxs_selection_sorted = np.argsort(selection[:, n])[::-1]
                 weights_ordered = np.concatenate((weights_ordered, selection[idxs_selection_sorted, :]),
@@ -572,8 +558,7 @@ class Topic3DResult:
                 return ""
 
         sns.heatmap(weights_ordered if ordered else self.decomposition,
-                    vmin=0,
-                    vmax=1,
+                    vmin=0, vmax=1,
                     cmap=cmap,
                     ax=ax,
                     xticklabels=idxs_reprez if ordered else sorted(idxs_reprez),
@@ -771,23 +756,78 @@ class Topic3DResult:
 
 
 # TODO
-class Topic3DResultCollection():
+class Topic3DModelCollection(list):
     
-    def __init__(self, list):
-        pass
+    def __init__(self, trained_models_list: list):
+        self.models = [jl.load(model_fp) for model_fp in trained_models_list]
+        self.CFMs_by_model = [model.components_ for model in self.models]
+        self.num_CFMs_by_model = np.asarray([len(CFMs) for CFMs in self.CFMs_by_model])
+
+    def plot_mean_perplexity_by_num_CFMs(self, path_to_save: str = ""):
+        
+        num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
+        perplexities = np.asarray([model.bound_ for model in self.models])
+        perplexities_means = []
+        perplexities_stds = []
+        for n in num_CFMs_by_model_unique:
+            perps = perplexities[self.num_CFMs_by_model == n]
+            perplexities_means.append(np.mean(perps))
+            perplexities_stds.append(np.std(perps))
+        
+        fig, ax = plt.subplots()
+        ax.errorbar(x=num_CFMs_by_model_unique,
+                    y=perplexities_means,
+                    yerr=perplexities_stds,
+                    capsize=2.5)
+        ax.set_xlabel("# CFMs")
+        ax.set_ylabel("mean perplexity")
+        
+        if isinstance(path_to_save, str):
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
 
 
-    def plot_mean_perplexity_by_num_CFMs(self):
-        return
+    def plot_mean_coherence_by_num_CFMs(self, data: np.ndarray, method: str = "npmi", path_to_save: str = ""):
+        
+        num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
 
-    def plot_mean_coherence_by_num_CFMs(self, method=""):
-        return
-    
+        coherence_all = []
+        for CFMs in self.CFMs_by_model:
+            coherence_all.append(Topic3DResult._compute_coherence_npmi_cos(components=CFMs,
+                                                                           data_used=data,
+                                                                           num_top_pixels=20))
+        coherences_means = []
+        coherences_stds = []
+        for n in num_CFMs_by_model_unique:
+            cohrs = coherence_all[self.num_CFMs_by_model == n]
+            coherences_means.append(np.mean(cohrs))
+            coherences_stds.append(np.std(cohrs))
+        
+        fig, ax = plt.subplots()
+        ax.errorbar(x=num_CFMs_by_model_unique,
+                    y=coherences_means,
+                    yerr=coherences_stds,
+                    capsize=2.5)
+        ax.set_xlabel("# CFMs")
+        ax.set_ylabel("mean perplexity")
+        
+        if isinstance(path_to_save, str):
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
+
+
     def plot_mean_empty_by_num_CFMs(self):
+
+        num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
+
         return
+
+
+    # TODO    
+    # def embed_CFMs(method="UMAP"):
+    #     return
     
-    def embed_CFMs(method="UMAP"):
-        return
-    
-    def compute_consensus(self, metric="jensenshannon"):
-        return
+    # def compute_consensus(self, metric="jensenshannon"):
+    #     return
