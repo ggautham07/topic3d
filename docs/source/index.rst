@@ -6,20 +6,20 @@
 topic3d documentation
 =====================
 
-Add your content using ``reStructuredText`` syntax. See the
-`reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
-documentation for details.
-
+.. Add your content using ``reStructuredText`` syntax. See the
+.. `reStructuredText <https://www.sphinx-doc.org/en/master/usage/restructuredtext/index.html>`_
+.. documentation for details.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :caption: Contents
 
    about
    installation
    usage
    workflow
    cli
+   getting_started/index
 
 .. toctree::
    :maxdepth: 2
@@ -53,13 +53,12 @@ Quick Example
 
 .. code-block:: bash
 
-   topic3d-decompose \
+   topic3d runall \
       --data_train_file ./data/sample_sim_train.npy \
       --data_test_file ./data/sample_sim_test.npy \
       --results_dir ./results/ \
       --num_components 5 \
-      --max_iter 50 \
-      --learning_method "batch" \
+      --max_iter 100 \
       --random_state 64
 
 

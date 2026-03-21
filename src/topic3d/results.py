@@ -826,7 +826,11 @@ class Topic3DModelPool():
 
     def find_best_num_CFMs(self, data_used: np.ndarray):
 
-        return self.rank_num_CFMs(by="coherence", data_used=data_used)[0]
+        ranking = self.rank_num_CFMs(by="coherence", data_used=data_used)
+        means_empty = self.compute_mean_empty_vs_num_CFMs()
+        for n_CFMs in ranking:
+            if means_empty[n_CFMs] == 0:
+                return n_CFMs
 
 
     def plot_mean_perplexity_vs_num_CFMs(self, path_to_save: str = ""):
@@ -904,21 +908,25 @@ class Topic3DModelPool():
                 counter += 1
         
         return counter
+    
 
-
-    def plot_mean_empty_vs_num_CFMs(self, path_to_save=""):
-
+    def compute_mean_empty_vs_num_CFMs(self):
+        
         num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
         mean_empty = []
         for n in num_CFMs_by_model_unique:
             CFMs_by_model_reqd = [self.CFMs_by_model[i] for i in np.nonzero(self.num_CFMs_by_model == n)[0]]
             mean_empty.append(np.mean([self.count_empty_CFMs(CFMs) / len(CFMs) for CFMs in CFMs_by_model_reqd]))
+        
+        return dict(zip(num_CFMs_by_model_unique, mean_empty))
+
+
+    def plot_mean_empty_vs_num_CFMs(self, path_to_save=""):
+
+        result = self.compute_mean_empty_vs_num_CFMs()
 
         fig, ax = plt.subplots()
-        ax.errorbar(x=num_CFMs_by_model_unique,
-                    y=mean_empty,
-                    yerr=mean_empty,
-                    capsize=2.5)
+        ax.plot(x=result.keys(), y=result.values())
         ax.set_xlabel("# CFMs")
         ax.set_ylabel("mean empty CFMs")
         

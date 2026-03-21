@@ -1,0 +1,25 @@
+2026-03-19 17:10:24,218 [INFO] --------------------------------------------------
+2026-03-19 17:10:24,218 [INFO] [58b8f9] Will save run outputs to: ./results/bintu_example
+2026-03-19 17:10:24,219 [INFO] Settings summary for run: 58b8f9
+2026-03-19 17:10:24,219 [INFO]     data_train_file: ./data/sample_exp.npy
+2026-03-19 17:10:24,219 [INFO]     data_test_file: None
+2026-03-19 17:10:24,219 [INFO]     model_file: None
+2026-03-19 17:10:24,219 [INFO]     results_dir: ./results/bintu_example
+2026-03-19 17:10:24,219 [INFO]     params_file: None
+2026-03-19 17:10:24,219 [INFO]     num_CFMs: 15
+2026-03-19 17:10:24,219 [INFO]     max_iter: 100
+2026-03-19 17:10:24,219 [INFO]     random_state: None
+2026-03-19 17:10:24,220 [INFO]     learning_method: batch
+2026-03-19 17:10:24,220 [INFO]     batch_size: 128
+2026-03-19 17:10:24,220 [INFO]     evaluate_learning: True
+2026-03-19 17:10:24,220 [INFO]     assess_model_quality: False
+2026-03-19 17:10:24,220 [INFO]     uid: 58b8f9
+2026-03-19 17:10:24,220 [INFO]     path_to_data: ./data/sample_exp.npy
+2026-03-19 17:10:24,220 [INFO]     path_to_training: ./results/bintu_example
+2026-03-19 17:10:24,220 [INFO]     path_to_log: ./results/bintu_example/logs.log
+2026-03-19 17:10:24,224 [INFO] Training data passed conformity checks
+2026-03-19 17:10:24,224 [INFO] No existing model supplied. New LDA model will be created
+2026-03-19 17:10:24,224 [INFO] [58b8f9] Initializing LDA model
+2026-03-19 17:10:24,224 [INFO] [58b8f9] Training LDA model...
+2026-03-19 17:11:36,270 [INFO] [58b8f9] Training finished successfully in 0 hours, 1 minutes and 12 seconds
+2026-03-19 17:11:43,276 [INFO] [no-uid] Saved results in ./results/bintu_example

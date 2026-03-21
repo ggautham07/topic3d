@@ -1,0 +1,18 @@
+{
+    "data_train_file": "./data/sample_exp.npy",
+    "data_test_file": null,
+    "model_file": null,
+    "results_dir": "./results/bintu_example",
+    "params_file": null,
+    "num_CFMs": 15,
+    "max_iter": 100,
+    "random_state": null,
+    "learning_method": "batch",
+    "batch_size": 128,
+    "evaluate_learning": true,
+    "assess_model_quality": false,
+    "uid": "58b8f9",
+    "path_to_data": "./data/sample_exp.npy",
+    "path_to_training": "./results/bintu_example",
+    "path_to_log": "./results/bintu_example/logs.log"
+}

@@ -40,6 +40,8 @@ from __future__ import annotations      # required for type hinting a class meth
 import warnings
 from typing import Iterable
 from numbers import Number
+from os import path
+from io import StringIO
 
 import numpy as np
 import pandas as pd
@@ -55,25 +57,184 @@ from . import visualization as vzl
 # =============================================================================
 
 
-class CoreTraceTable():
+class FOFTraceDataCoreTable():
+    """
+    Custom class to handle the trace data core table following the FOF-CT format.
 
-    def __init__(self):
-        pass
+    Only designed for ball-and-stick (polymeric) chromatin tracing datasets.
+    """
+
+    def __init__(self, path_to_file):
+
+        def _find_and_split(full_seq: str, sub_seq: str) -> list:
+            """            
+            Finds the first occurrence of `sub_seq` in `full_seq` and splits it at the first newline after.
+
+            Internal function used to extract header rows from Fish Omics Format (FOF) data.
+            """
+            return full_seq[full_seq.index(sub_seq):].split("\n", maxsplit=1)
+        
+        def _extract_metadata_fof_raw(contents: str):
+            """
+            Extract header rows starting with `##` from raw FOF trace table file and copy metadata into dictionary.
+            """
+            assert isinstance(contents, str)
+            
+            metadata = {}
+            for line in contents[:5000].splitlines():
+                if line.lower().startswith("##columns"):
+                    break
+                elif line.startswith("##"):
+                    line_proc = line.replace("##", "").replace(",", "").lower().split("=")
+                    metadata[line_proc[0]] = line_proc[1]
+            
+            return metadata
+
+        assert path.isfile(path_to_file)
+
+        # load the data and organize them as a dataframe
+        contents = open(path_to_file, mode="r").read()  # load all contents as string
+        metadata = _extract_metadata_fof_raw(contents)
+        colnames_raw, data_raw = _find_and_split(contents, "##columns")  # get columns and table from raw data
+        colnames = colnames_raw[colnames_raw.index("(")+1:colnames_raw.index(")")].split(",")   # get column names
+        colnames = [colname.strip() for colname in colnames]  # strip whitespace from column names
+        data = pd.read_csv(StringIO(data_raw), sep=",", header=None)  # parse raw data into dataframe
+        try:
+            assert len(data.columns) == len(colnames)
+        except AssertionError:
+            print("Column names and number of data columns mismatch!")
+            print("Attempting naive matching...")
+            data.columns = colnames[:len(data.columns)]
+            try:
+                assert data.X.dtype == float
+                assert data.Y.dtype == float
+                assert data.Z.dtype == float
+                assert data.Chrom.dtype == object and data.Chrom.str.contains("chr").all()
+                assert data.Chrom_Start.dtype == int
+                assert data.Chrom_End.dtype == int
+            except AssertionError:
+                print("Matching unsuccessful. Correct raw data and try again.")
+                raise ValueError("Number of data columns is different from length of column names.")
+        else:
+            data.columns = colnames  # assign column names to trace table
+
+        self.table: pd.DataFrame = data.copy()
+        self.unit: str = metadata["xyz_unit"]
+        self.assembly: str = metadata["genome_assembly"]
+        # self.version = metadata["fof-ct_version"]
+        self.extract_bc_bins()
+
 
     @staticmethod
-    def _extract_header_row_from_fof(full_seq:str, sub_seq:str) -> list:
-        """
-        Internal function used to extract header rows from Fish Omics Format (FOF) data
-        
-        Finds the first occurrence of sub_seq in full_seq and splits it at the first newline
-        """
+    def _convert_coords_to_nm(coords, unit):
 
-        return full_seq[full_seq.index(sub_seq):].split("\n", maxsplit=1)
+        mapping = {
+            "nm": 1,
+            "nanometer": 1,
+            "micron": 1e3,
+            "mm": 1e6,
+            "millimeter": 1e6,
+            "cm": 1e8,
+            "centimeter": 1e8,
+        }
+
+        return coords * mapping[unit]
+
     
-
-    def _extract_traces_from_fof(self) -> np.ndarray:
+    def extract_bc_bins(self, check_contiguity: bool = False, set_attr: bool = True):
         """
-        Extract trace data from a loaded FOF-CT table and reformat into a 3D NumPy array.
+        Extract barcode target bins from the full table based on `Chrom_Start` and `Chrom_End`
+        """
+
+        chrom_starts = np.sort(self.table.Chrom_Start.unique())
+        chrom_ends = np.sort(self.table.Chrom_End.unique())
+        assert len(chrom_starts) == len(chrom_ends)
+        
+        bc_bins = np.hstack((chrom_starts[..., np.newaxis], chrom_ends[..., np.newaxis]))
+        num_bc = len(bc_bins)
+        bc_ids = np.arange(num_bc)
+        bc_bins_sizes = bc_bins[:, 1] - bc_bins[:, 0]
+        if check_contiguity:
+            assert np.all(np.isclose(bc_bins[1:, 0] - bc_bins[:-1, 1], 0, atol=1))
+        
+        bc_bins_df = pd.DataFrame({
+            "Barcode_ID": bc_ids,
+            "Chrom_Start": chrom_starts,
+            "Chrom_End": chrom_ends,
+            "Size": bc_bins_sizes,
+            })
+        
+        if set_attr:
+            self.bc_bins = bc_bins_df.copy()
+            self.num_bc = num_bc
+
+        return bc_bins_df
+            
+
+    def treat(self, inplace=True):
+        """
+        Treat the original data to fix common errors in publicly available FOF-CT data and convert units to nm
+
+        Note: This treatment is designed only to allow extraction of the stack of traces correctly for `topic3d`. For 
+        accurate results, use better pre-treated FOF-CT data.
+
+        Errors include duplicated barcodes in single traces, and global `Trace_IDs` in the presence of `Cell_IDs`.
+        Duplicated barcodes are removed and trace IDs are replaced by combining them with cell IDs. Note that this
+        does not work if combined Trace and Cell IDs are still not sufficient to ensure uniqueness (for example, 
+        when `Sub_Cell_ROI_ID` and `Extra_Cell_ROI_ID` also need to be accounted for).
+        """
+
+        # convert Trace_IDs and Cell_IDs to strings 
+        data = self.table.astype({"Trace_ID": str})
+        extra_col_flag = False
+        if "Cell_ID" in self.table.columns:
+            extra_col_flag = True
+            data = data.astype({"Cell_ID": str})
+        
+        # replace Trace_ID by combining Trace_ID and Cell_ID for each row to make it truly unique
+        if extra_col_flag:  # not required when no Cell_ID
+            trace_IDs_all = []
+            for _, row in data.iterrows():   
+                trace_IDs_all.append(str(row["Cell_ID"]) + "_" + str(row["Trace_ID"]))
+            data.Trace_ID = trace_IDs_all.copy()
+        else:
+            trace_IDs_all = data.Trace_ID.to_list()
+        trace_IDs_unique = np.unique(trace_IDs_all)
+        # self.num_traces = len(trace_IDs_unique)
+        print("Reallotted Trace_IDs to ensure uniqueness")
+    
+        # for each trace, drop duplicated barcodes
+        dupli_flag = False
+        data_filt = []
+        for tID in trace_IDs_unique:
+            data_tID = data[data.Trace_ID == tID]
+            if not dupli_flag:
+                _, counts = np.unique(data_tID.Chrom_Start.to_list(), return_counts=True)
+                if np.any(counts > 1):
+                    dupli_flag = True
+            data_filt.append(data_tID.drop_duplicates(subset="Chrom_Start", keep=False, inplace=False))
+        data_filt = pd.concat(data_filt)
+        if dupli_flag:
+            print("Duplicate barcode coordinates were found and dropped")
+        else:
+            print("No duplicate barcode coordinates were found")
+
+        # conversion of X, Y, Z to nm based on initial unit
+        data_filt[["X", "Y", "Z"]] = self._convert_coords_to_nm(data_filt[["X", "Y", "Z"]], unit=self.unit)
+        print("Converted data to nm based on unit provided in raw data")
+
+        if inplace:
+            self.table_org = self.table.copy()
+            self.table = data_filt.copy()
+            self.extract_bc_bins()
+            self.num_traces = len(np.unique(self.table.Trace_ID))
+            return None
+        return data_filt
+
+
+    def extract_traces(self, path_to_save: str = ""):
+        """
+        Extract trace data from a loaded and treated FOF-CT table and reformat into a 3D NumPy array.
 
         Returns
         -------
@@ -85,24 +246,29 @@ class CoreTraceTable():
         >>> traces = raw_data._extract_traces_from_fof()
         """
 
-        traces = np.empty((self.num_traces, self.num_bc, 3))
-        traces[:] = np.nan
-        # create the trace from the coordinates
-        for j, curr_trace_id in enumerate(self.trace_ids):
-            curr_data = self.library[self.library["Trace_ID"] == curr_trace_id]
-            barcodes = [self.bc_ids[x] for x in curr_data["Chrom_Start"].to_list()]
-            coords = curr_data[["X", "Y", "Z"]].to_numpy()
-            traces[j, barcodes] = coords[:]
+        # initilize empty array
+        trace_arr = np.empty((self.num_traces, self.num_bc, 3))
+        trace_arr[:] = np.nan
+        # for each trace ID, extract traces and fill array
+        for i, trID in enumerate(np.unique(self.table.Trace_ID)):
+            data_trID = self.table[self.table.Trace_ID == trID]
+            bcs_trID = []
+            for st in data_trID["Chrom_Start"].to_list():
+                bcs_trID.append(self.bc_bins.loc[self.bc_bins["Chrom_Start"] == st, "Barcode_ID"].iloc[0])
+            assert len(bcs_trID) == len(np.unique(bcs_trID))
+            coords = np.squeeze(data_trID[["X", "Y", "Z"]].to_numpy())
+            trace_arr[i, bcs_trID] = coords[:]
         
-        return traces
+        if isinstance(path_to_save, str) and len(path_to_save) > 0:
+            np.save(file=path_to_save, arr=trace_arr, allow_pickle=False)
+            return None
+        return CoordsArrayStack(trace_arr)
     
 
-    def save():
+    # TODO
+    def save(path_to_file: str):
         pass
 
-
-    def process():
-        return
 
 
 class CoordsArrayStack(np.ndarray):
@@ -894,7 +1060,7 @@ class PWDistArrayStack(_PWArrayStack):
 
         map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
-        prox_avgs = [np.mean(self.proximity(threshold=thr, hardness=hrd),axis=0) \
+        prox_avgs = [np.mean(self.compute_proximity(threshold=thr, hardness=hrd),axis=0) \
                      for thr, hrd in zip(thresholds, hardnesses)]
         
         fig = map_form_fn[form](items=prox_avgs,
