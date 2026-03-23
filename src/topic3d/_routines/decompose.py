@@ -24,7 +24,7 @@ Dependencies:
 
 from topic3d.workflow._parsers import parse_cli_arguments_runall
 from topic3d.workflow._dataops import load_data_file, load_model_file
-from topic3d.workflow.core import initialize, decompose_data
+from topic3d.workflow.core import initialize_run, decompose_data
 
 
 def main():
@@ -41,7 +41,7 @@ def main():
     existing_model = load_model_file(args.model_file)
 
     # Step 4: Initialize run metadata and output directories if needed
-    args_full = initialize(params=params,
+    args_full = initialize_run(params=params,
                                   dir_results=args.results_dir,
                                   path_to_data=[args.data_file],)
 

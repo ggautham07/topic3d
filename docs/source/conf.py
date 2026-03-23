@@ -8,7 +8,8 @@
 
 import os
 import sys
-from sphinxawesome_theme.postprocess import Icons
+import pygments
+import a11y_pygments
 sys.path.insert(0, os.path.abspath('../../src'))
 
 project = 'topic3d'
@@ -40,10 +41,11 @@ nb_execution_mode = "off"
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'sphinxawesome_theme'
+html_theme = 'breeze'
+html_theme_options = {"external_links": ["https://github.com/ggautham07/topic3d",
+                                         ],
+                      'header_tabs': False}
 html_static_path = ['_static']
-html_permalinks_icon = Icons.permalinks_icon
-# html_theme_options = {
-#     "logo_light": "path/to/light/logo",
-#     "logo_dark": "path/to/dark/logo"
-# }
+
+pygments_light_style = "a11y-high-contrast-light"
+pygments_dark_style = "github-dark-high-contrast"

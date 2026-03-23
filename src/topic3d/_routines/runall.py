@@ -30,9 +30,10 @@ Dependencies:
 """
 
 from os import path
-from topic3d.workflow._parsers import parse_cli_arguments_runall, read_params_json
+from topic3d.workflow._parsers import parse_cli_arguments_runall, parse_params_json
 from topic3d.workflow._dataops import load_data_file, prepare_proximity_data
-from topic3d.workflow.core import initialize, train_LDA_model, plot_learning_evaluation, decompose_data, save_results
+from topic3d.workflow.core import initialize_run, initialize_LDA_model, train_LDA_model, plot_learning_evaluation, \
+    decompose_data, save_results
 
 
 def main(args_init):
@@ -42,9 +43,9 @@ def main(args_init):
     args = parse_cli_arguments_runall(args_init)
 
     # Step 2: Convert Namespace to dict for supplying parameters as required by the API
-    params = dict(vars(args))   # Generally params do not have all CLI arguments, this is just for easy scripting here
+    params = dict(vars(args))
     if args.params_file is not None:
-        params.update(read_params_json(args.params_file))
+        params.update(parse_params_json(args.params_file))
 
     # Step 3: Load data using internal workflow API
     data_train_file_contents = load_data_file(args.data_train_file)
@@ -58,7 +59,7 @@ def main(args_init):
         if "proximity_" in param:
             proximity_params[param.replace("proximity_", "")] = params[param]
     
-    # Process proximity data
+    # Step 4: Process proximity data
     data_train = prepare_proximity_data(data=data_train_file_contents,
                                         proximity_params=proximity_params)
     if data_test_file_contents is None:
@@ -67,44 +68,51 @@ def main(args_init):
         data_test = prepare_proximity_data(data=data_test_file_contents,
                                            proximity_params=proximity_params)
 
-    # Step 4: Initialize run metadata and output directories
-    args_full = initialize(params=params,
-                           dir_results=args.results_dir,
-                           path_to_data=args.data_train_file,
-                        #    tag=getattr(args, "tag"),
-                        #    save_logs=getattr(args, "save_logs"))
-                        )
+    # Step 5: Initialize run metadata and output directories
+    args_full, logger = initialize_run(params=params,
+                                       dir_results=args.results_dir,
+                                       path_to_data=args.data_train_file,)
+    uid = args_full.get("uid", None)
 
-    # # Step 6: Split into training and testing sets (if indicated in args)
-    # data_train, data_test = split_proximity_data(data=data_prepped,
-    #                                              train_data_proportion=params["train_data_proportion"],
-    #                                              uid=args_full.get("uid", None))
+    # Step 6: Initialize LDA model
+    model = initialize_LDA_model(params=params,
+                                 uid=uid,
+                                 logger=logger)
 
-    # Step 7: Run LDA decomposition on the processed data
+    # Step 7: Train LDA model
     if args_full["evaluate_learning"]:
         model, perp_by_iter = train_LDA_model(params=params,
                                               data_train=data_train,
                                               data_test=data_test,
                                               summary=args_full,
-                                              uid=args_full.get("uid", None))
+                                              uid=uid,
+                                              logger=logger)
         plot_learning_evaluation(perp_by_iter,
-                                 path_to_save=path.join(args_full["path_to_training"], "perplexity_evolution.png"))
+                                 path_to_save=path.join(args_full["path_to_training"], "perplexity_evolution.png"),
+                                 uid=uid,
+                                 logger=logger)
     else:
         model = train_LDA_model(params=params,
                                 data_train=data_train,
                                 data_test=data_test,
                                 summary=args_full,
-                                uid=args_full.get("uid", None))
+                                uid=uid,
+                                logger=logger)
     
+    # Step 8: Evaluate LDA model using NPMI coherence
     # evaluate_LDA_model()
     
-    # Step 5: Run LDA decomposition on the processed data
-    components, decomposition = decompose_data(data=data_train,
-                                               model=model)
+    # Step 9: Run LDA decomposition on the processed data
+    _, decomposition = decompose_data(data=data_train,
+                                      model=model,
+                                      uid=uid,
+                                      logger=logger)
     
-    save_results(model=model,
-                 decomposition=decomposition,
-                 dir_to_save=args_full["path_to_training"])
+    # Step 10: Save all the results
+    if args_full.dir_results is not None:
+        save_results(model=model,
+                     decomposition=decomposition,
+                     dir_to_save=args_full["path_to_training"])
 
 if __name__ == "__main__":
     main()

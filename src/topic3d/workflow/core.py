@@ -21,13 +21,11 @@ from time import perf_counter
 from numbers import Number
 import json
 import numpy as np
-import h5py
 from sklearn.decomposition import LatentDirichletAllocation
 
+from ._logging import setup_log, setup_log_nosave, kill_logger
+
 from topic3d.results import Topic3DResult
-
-from ._logging import setup_log, setup_log_simple, setup_log_simple2
-
 
 # To display durations in seconds in a more readable format
 def readable_duration(duration:Number):
@@ -48,7 +46,7 @@ def readable_duration(duration:Number):
 ##################################################################################################################
 
 
-def initialize(params: dict, dir_results: str, path_to_data: str | list):
+def initialize_run(params: dict, path_to_data: str | list, dir_results: str = None):
     """
     Initialize a run directory and logging for a CLI invocation (simple layout).
 
@@ -78,19 +76,17 @@ def initialize(params: dict, dir_results: str, path_to_data: str | list):
     """
 
     assert type(params) == dict
-    assert type(dir_results) == str
-    try:
+    if dir_results is None:
+        save_flag = False
+    else:
+        assert type(dir_results) == str
         if dir_results.endswith("###"):
             assert path.isdir(dir_results.strip("###"))
         else:
             assert path.isdir(path.dirname(dir_results))
-        save_flag = True
-    except AssertionError:
-        print("Directory to save results not specified or found. Results and logs will not be saved.")
-        save_flag = False
 
     # Setting a unique ID for the training
-    uid = str(uuid4())[:6]
+    uid = str(uuid4())[:8]
     if save_flag:
         if dir_results.endswith("/###"):
             dir_training = dir_results.replace("/###", "/"+str(uid))
@@ -98,17 +94,17 @@ def initialize(params: dict, dir_results: str, path_to_data: str | list):
             dir_training = dir_results
         makedirs(dir_training, exist_ok=False)
         log_file = path.join(dir_training, f"logs.log")    # Setup the log file path (in the same folder as training)
-        setup_log(log_file)     # Setup logging to file and console
+        logger:logging.Logger = setup_log(log_file)     # Setup logging to file and console
     else:
-        setup_log_simple()
+        logger:logging.Logger = setup_log_nosave()
         dir_training = ""
         log_file = ""
 
-    logging.info("-" * 50)
+    logger.info("-" * 50)
     if save_flag:
-        logging.info(f"[{uid}] Will save run outputs to: {dir_training}")
+        logger.info(f"[{uid}] Results and logs will be saved to: {dir_training}")
     else:
-        logging.info(f"[{uid}] Results/logs will not be saved (no valid dir_results)")
+        logger.warning(f"[{uid}] Results and logs will NOT be saved")
 
     summary = params.copy()
     summary.update({"uid": uid,
@@ -117,16 +113,15 @@ def initialize(params: dict, dir_results: str, path_to_data: str | list):
         summary.update({"path_to_training": dir_training,
                         "path_to_log": log_file,})
 
-    logging.info(f"Settings summary for run: {uid}")
+    logger.info(f"Settings summary for run: {uid}")
     for key in summary.keys():
-        logging.info(f"    {key}: {summary[key]}")
+        logger.info(f"      {key}: {summary[key]}")
     if save_flag:
         json.dump(summary, open(path.join(dir_training, "summary.json"), mode="x"), indent=4)
 
-    return summary
+    return summary, logger
 
-
-def _check_proximity_data(data):
+def quickcheck_proximity_data(data):
     assert isinstance(data, np.ndarray)
     assert data.ndim == 2
     dim = int(np.ceil(np.sqrt(data.shape[-1] * 2)))
@@ -135,14 +130,52 @@ def _check_proximity_data(data):
     assert np.all(data >= 0)
 
 
-def _check_LDA_model(model):
+def quickcheck_LDA_model(model):
     assert isinstance(model, LatentDirichletAllocation)
 
 
-def train_LDA_model(params: dict,
-                    data_train: np.ndarray, data_test: np.ndarray = None,
-                    model: LatentDirichletAllocation = None,
-                    **kwargs):
+def initialize_LDA_model(params: dict,
+                         uid: str = None,
+                         logger: logging.Logger = None):
+    
+    if uid is None:
+        uid = "no-uid"
+    else:
+        assert isinstance(uid, str)
+
+    log_exists = False
+    if logger is None:
+        logger = setup_log_nosave(name="topic3d-logger")
+    else:
+        assert isinstance(logger, logging.Logger)
+        log_exists = True
+    
+    logger.info(f"[{uid}] Initializing LDA model...")
+
+    try:
+        model = LatentDirichletAllocation(n_components=params["num_CFMs"],
+                                            max_iter=params["max_iter"],
+                                            evaluate_every=1 if params["evaluate_learning"] else -1,
+                                            learning_method=params["learning_method"],
+                                            batch_size=params["batch_size"],
+                                            random_state=params["random_state"],
+                                            verbose=1)
+    except Exception:
+        logger.exception(f"[{uid}] Error occurred during model initialization")
+    
+    logger.info(f"[{uid}] Initialized model successfully")
+
+    if not log_exists:
+        kill_logger(logger)
+
+    return model
+
+
+def train_LDA_model(model: LatentDirichletAllocation,
+                    data_train: np.ndarray,
+                    params: dict,
+                    uid: str = None,
+                    logger: logging.Logger = None):
     """
     Train an LDA model on pairwise proximity data.
 
@@ -186,71 +219,40 @@ def train_LDA_model(params: dict,
     """
     
     assert isinstance(params, dict)
-    existing_log = False
-    if kwargs.get("logger") is None:
-        setup_log_simple2(name="training-logger")
-        logger = logging.getLogger("training-logger")
-    else:
-        assert isinstance(kwargs.get("logger"), logging.Logger)
-        logger = kwargs["logger"]
-        existing_log = True
-    
-    _check_proximity_data(data_train)
-    logger.info("Training data passed conformity checks")
-    # flag_test = False
-    # if not (data_test is None):
-    #     _check_proximity_data(data_test)
-    #     logging.info("Testing data passed conformity checks")
-    #     flag_test = True
-    if not (model is None):
-        _check_LDA_model(model)
-        logger.info(f"[{uid}] Loaded LDA model")
-        flag_exising_model = True
-    else:
-        flag_exising_model = False
 
-    uid = kwargs.get("uid", "no-uid")
     if uid is None:
         uid = "no-uid"
-
-    if flag_exising_model:
-        logger.info("Using existing LDA model loaded from the given path")
     else:
-        logger.info("No existing model supplied. New LDA model will be created")
+        assert isinstance(uid, str)
 
-    # instantiate the LDA model
-    if not flag_exising_model:
-        logging.info(f"[{uid}] Initializing LDA model")
-        try:
-            model = LatentDirichletAllocation(n_components=params["num_CFMs"],
-                                              max_iter=params["max_iter"],
-                                              evaluate_every=1 if params["evaluate_learning"] else -1,
-                                              learning_method=params["learning_method"],
-                                              batch_size=params["batch_size"],
-                                              random_state=params["random_state"],
-                                              verbose=1)
-        except Exception as err:
-            logging.error(f"[{uid}] Error occurred during LDA instantiation: {str(err)}")
-            raise
+    log_exists = False
+    if logger is None:
+        logger = setup_log_nosave(name="topic3d-logger")
+    else:
+        assert isinstance(logger, logging.Logger)
+        log_exists = True
+    
+    quickcheck_proximity_data(data_train)
+    logger.info("Training data passed conformity checks")
+    
+    quickcheck_LDA_model(model)
+    logger.info(f"[{uid}] Model passed conformity checks")
 
-    # performing the training and transformation of data to get results
+    # perform training
     try:
-        logging.info(f"[{uid}] Training LDA model...")
+        logger.info(f"[{uid}] Training model...")
         time_start = perf_counter()
         capt_out = StringIO()
         with redirect_stdout(capt_out):
             model = model.fit(data_train)
         output = capt_out.getvalue()
         time_elapsed = readable_duration(perf_counter() - time_start)
-        logging.info(f"[{uid}] Training finished successfully in {time_elapsed}")
-    except Exception as err:
-        logging.error(f"[{uid}] Error occurred during training: {str(err)}")
+        logger.info(f"[{uid}] Training finished successfully in {time_elapsed}")
+    except Exception:
+        logger.exception(f"[{uid}] Error occurred during model training")
 
-    # TODO close_log function in _logging.py
-    if not existing_log:
-        for handler in logger.handlers[:]:
-            handler.close()
-            logger.removeHandler(handler)
+    if not log_exists:
+        kill_logger(logger)
 
     if params["evaluate_learning"]:
         term = "perplexity: "
@@ -259,10 +261,44 @@ def train_LDA_model(params: dict,
         return model, perplexity_over_training
     else:
         return model
+    
+
+def plot_learning_evaluation(perplexity_by_iter: dict,
+                             path_to_save: str = "",
+                             uid: str  = None,
+                             logger: logging.Logger = None):
+    
+    import matplotlib.pyplot as plt
+
+    if uid is None:
+        uid = "no-uid"
+    else:
+        assert isinstance(uid, str)
+
+    log_exists = False
+    if logger is None:
+        logger = setup_log_nosave(name="topic3d-logger")
+    else:
+        assert isinstance(logger, logging.Logger)
+        log_exists = True
+
+    fig, ax = plt.subplots()
+    ax.plot(perplexity_by_iter.keys(), perplexity_by_iter.values())
+    ax.set_xlabel("iter #", labelpad=10)
+    ax.set_ylabel("perplexity", labelpad=10)
+
+    if isinstance(path_to_save, str):
+        fig.savefig(path_to_save, bbox_inches="tight")
+        logger.info(f"[{uid}] Saved learning evaluation successfully")
+        plt.close(fig)
+        if not log_exists:
+            kill_logger(logger)
+    else:
+        return fig
 
 
 # TODO
-def evaluate_LDA_model(model, data):
+def evaluate_LDA_model(model, data_train, data_test):
     # model_score = model.score(data_train)
     # mode_train_perplexity = model.bound_
     # if flag_test:
@@ -316,29 +352,36 @@ def evaluate_LDA_model(model, data):
     return
 
 
-def plot_learning_evaluation(perplexity_by_iter: dict, path_to_save: str = ""):
+def decompose_data(data: np.ndarray,
+                   model: LatentDirichletAllocation,
+                   uid: str = None,
+                   logger: logging.Logger = None):
     
-    import matplotlib.pyplot as plt
-    
-    fig, ax = plt.subplots()
-    ax.plot(perplexity_by_iter.keys(), perplexity_by_iter.values())
-    ax.set_xlabel("iter #", labelpad=10)
-    ax.set_ylabel("perplexity", labelpad=10)
-
-    if isinstance(path_to_save, str):
-        fig.savefig(path_to_save, bbox_inches="tight")
-        plt.close(fig)
+    if uid is None:
+        uid = "no-uid"
     else:
-        return fig
+        assert isinstance(uid, str)
 
+    log_exists = False
+    if logger is None:
+        logger = setup_log_nosave(name="topic3d-logger")
+    else:
+        assert isinstance(logger, logging.Logger)
+        log_exists = True
 
-def decompose_data(data: np.ndarray, model: LatentDirichletAllocation, **kwargs):
+    quickcheck_proximity_data(data)
+    logger.info(f"[{uid}] Data for decomposition passed conformity checks")
 
-    _check_proximity_data(data)
-    _check_LDA_model(model)
+    quickcheck_LDA_model(model)
+    logger.info("LDA model for decomposition passed conformity checks")
 
-    # logging.info(f"[{uid}] Decomposing data based on existing LDA model...")
-    decomposition = model.transform(data)
+    try:
+        decomposition = model.transform(data)
+    except Exception:
+        logger.exception(f"[{uid}] Error occurred during data decomposition")
+
+    if not log_exists:
+        kill_logger(logger)
 
     return model.components_, decomposition
 
@@ -346,27 +389,36 @@ def decompose_data(data: np.ndarray, model: LatentDirichletAllocation, **kwargs)
 def save_results(model: LatentDirichletAllocation,
                  decomposition: np.ndarray,
                  dir_to_save: str,
-                 **kwargs):
-    
+                 uid: str = None,
+                 logger: logging.Logger = None):
 
-    uid = kwargs.get("uid", "no-uid")
     if uid is None:
         uid = "no-uid"
-    
-    results = Topic3DResult(model=model,
-                            decomposition=decomposition)
-    results.save(dir_to_save=dir_to_save)
-    results.plot_CFMs(ordered=False, path_to_save=path.join(dir_to_save, "CFMs.png"))
-    results.plot_CFMs(ordered=True, path_to_save=path.join(dir_to_save, "CFMs_ordered.png"))
-    results.plot_decomposition(ordered=False,
-                               path_to_save=path.join(dir_to_save, "decomposition.png"),
-                               cmap="Blues")
-    results.plot_decomposition(ordered=True,
-                               path_to_save=path.join(dir_to_save, "decomposition_ordered.png"),
-                               cmap="Blues")
-    
-    logging.info(f"[{uid}] Saved results in {dir_to_save}")
 
+    log_exists = False
+    if logger is None:
+        logger = setup_log_nosave(name="topic3d-logger")
+    else:
+        assert isinstance(logger, logging.Logger)
+        log_exists = True
+    
+    logger.info(f"[{uid}] Attempting to save results")
+    try:
+        results = Topic3DResult(model=model,
+                                decomposition=decomposition)
+        results.save(dir_to_save=dir_to_save)
+        results.plot_CFMs(ordered=False, path_to_save=path.join(dir_to_save, "CFMs.png"))
+        results.plot_CFMs(ordered=True, path_to_save=path.join(dir_to_save, "CFMs_ordered.png"))
+        results.plot_decomposition(ordered=False,
+                                path_to_save=path.join(dir_to_save, "decomposition.png"),
+                                cmap="Blues")
+        results.plot_decomposition(ordered=True,
+                                path_to_save=path.join(dir_to_save, "decomposition_ordered.png"),
+                                cmap="Blues")
+    except Exception:
+        logger.exception(f"[{uid}] Error occurred while saving results")
+    
+    logger.info(f"[{uid}] Saved results in {dir_to_save} successfully")
 
-def write_results(model):
-    return
+    if not log_exists:
+        kill_logger(logger)
