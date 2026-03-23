@@ -10,7 +10,7 @@ import numpy as np
 import h5py
 from scipy.spatial.distance import squareform
 
-from topic3d.datatypes import CoordsArrayStack, PWDistArrayStack
+from topic3d.datatypes import CoordsArrayStack, PWDistArrayStack, FOFTraceDataCoreTable
 
 
 # NOTE legacy function to load data
@@ -51,7 +51,7 @@ from topic3d.datatypes import CoordsArrayStack, PWDistArrayStack
 #             dataobj = {x:y[:] for x, y in handler.items()}
 #             dataobj.update({x:y[:] for x, y in handler.attrs.items()})
 
-#     return dataobj
+#     return dataobj   
 
 
 def load_data_file(path_to_file) -> (np.ndarray | dict):
@@ -61,34 +61,27 @@ def load_data_file(path_to_file) -> (np.ndarray | dict):
     If directory is given, a tag must be provided. Else file path is sufficient
     """
 
-    try:
-        assert isinstance(path_to_file, str) and path_to_file.endswith((".npy", ".h5"))
-        assert path.isfile(path_to_file)
-    except AssertionError:
-        logging.error(f"No Numpy or compatible HDF5 file found")
-        raise
+    assert isinstance(path_to_file, str) and path_to_file.endswith((".npy", ".h5", ".csv"))
+    assert path.isfile(path_to_file)
     
-    logging.info(f"Loading data from {path_to_file}")
+    logging.info(f"Attempting to load data from {path_to_file}")
 
     if path_to_file.endswith(".npy"):
         data = np.load(path_to_file, allow_pickle=True)
-        assert data.ndim == 2
-        try:
-            squareform(data[0])
-        except ValueError:
-            logging.error("Loaded data is a not a true pairwise array stack")
-            raise
-        return data
     
-    # try:
-    #     dataobj = ProcessedData()
-    #     dataobj.load(path_to_file)
-    # except AssertionError or KeyError:
-    #     with h5py.File(path_to_file, mode="r") as handler:
-    #         dataobj = {x:y[:] for x, y in handler.items()}
-    #         dataobj.update({x:y[:] for x, y in handler.attrs.items()})
+    elif path_to_file.endswith(".csv"):
+        data = FOFTraceDataCoreTable(path_to_file)
 
-    # return dataobj
+    elif path_to_file.endswith("h5"):
+        with h5py.File(path_to_file, mode="r") as handler:
+            data = {x:y[:] for x, y in handler.items()}
+            data.update({x:y[:] for x, y in handler.attrs.items()})
+
+    else:
+        logging.info("Unrecognized file extension")
+        raise ValueError
+
+    return data
 
 
 def load_model_file(path_to_file: str):
@@ -104,6 +97,48 @@ def load_model_file(path_to_file: str):
 
     return jl.load(path_to_file)
 
+
+def _check_proximity_array(data):
+    assert data.ndim in [2, 3]
+    if data.ndim == 2:
+        try:
+            squareform(data[0])
+        except ValueError:
+            logging.error("Loaded data is a not a true pairwise array stack")
+            raise
+        data_ = np.copy(data)
+    elif data.ndim == 3:
+        assert data.shape[1] == data.shape[2]
+        try:
+            squareform(data[0])
+        except ValueError:
+            logging.error("Loaded data is a not a true pairwise distance map stack")
+            raise
+        data_ = []
+        for i in range(data.shape[0]):
+            data_.append(squareform(data[i]))
+        data_ = np.asarray(data_)
+        
+    return data_
+
+
+def prepare_proximity_data(data, h5_kw: str = None, proximity_params: dict = None):
+
+    assert isinstance(data, (np.ndarray, FOFTraceDataCoreTable, dict))
+
+    if isinstance(data, dict):
+        assert not (h5_kw is None)
+        data_prep = data[h5_kw]
+    
+    elif isinstance(data, FOFTraceDataCoreTable):
+        assert isinstance(proximity_params, dict)
+        assert "threshold" in proximity_params.keys()
+        data.treat(inplace=True)
+        data_prep = data.extract_traces().compute_pwds().compute_proximity(**proximity_params)
+
+    data_prep = _check_proximity_array(data if isinstance(data, np.ndarray) else data_prep)
+
+    return data_prep
 
 
 # # TODO update normalisation and imputed parts of code from branch cines - cines/code/perform_decomposition.py

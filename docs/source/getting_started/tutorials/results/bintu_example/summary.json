@@ -11,7 +11,7 @@
     "batch_size": 128,
     "evaluate_learning": true,
     "assess_model_quality": false,
-    "uid": "58b8f9",
+    "uid": "50652a",
     "path_to_data": "./data/sample_exp.npy",
     "path_to_training": "./results/bintu_example",
     "path_to_log": "./results/bintu_example/logs.log"

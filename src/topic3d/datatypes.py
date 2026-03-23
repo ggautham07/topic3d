@@ -266,8 +266,8 @@ class FOFTraceDataCoreTable():
     
 
     # TODO
-    def save(path_to_file: str):
-        pass
+    # def save(path_to_file: str):
+    #     pass
 
 
 

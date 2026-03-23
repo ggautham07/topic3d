@@ -228,6 +228,18 @@ def parse_cli_arguments_runall(args_init=None):
         # REMAINING PARAMETERS
         # ========================
 
+        parser.add_argument("--proximity_threshold",
+                            type=int,
+                            required=False,
+                            help="Proximity threshold when FOF data is supplied")
+        
+        parser.add_argument("--proximity_hardness",
+                            type=float,
+                            required=False,
+                            help="Proximity threshold hardness when FOF data is supplied. Hardness = 1 --> binary",
+                            metavar=[0-1],
+                            default=1)
+
         parser.add_argument("--num_CFMs",
                             type=int,
                             required=True,

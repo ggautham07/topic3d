@@ -31,7 +31,7 @@ Dependencies:
 
 from os import path
 from topic3d.workflow._parsers import parse_cli_arguments_runall, read_params_json
-from topic3d.workflow._dataops import load_data_file
+from topic3d.workflow._dataops import load_data_file, prepare_proximity_data
 from topic3d.workflow.core import initialize, train_LDA_model, plot_learning_evaluation, decompose_data, save_results
 
 
@@ -47,11 +47,25 @@ def main(args_init):
         params.update(read_params_json(args.params_file))
 
     # Step 3: Load data using internal workflow API
-    data_train = load_data_file(args.data_train_file)
+    data_train_file_contents = load_data_file(args.data_train_file)
     if args.data_test_file is None:
+        data_test_file_contents = None
+    else:
+        data_test_file_contents = load_data_file(args.data_test_file)
+
+    proximity_params = {}
+    for param in params.keys():
+        if "proximity_" in param:
+            proximity_params[param.replace("proximity_", "")] = params[param]
+    
+    # Process proximity data
+    data_train = prepare_proximity_data(data=data_train_file_contents,
+                                        proximity_params=proximity_params)
+    if data_test_file_contents is None:
         data_test = None
     else:
-        data_test = load_data_file(args.data_test_file)
+        data_test = prepare_proximity_data(data=data_test_file_contents,
+                                           proximity_params=proximity_params)
 
     # Step 4: Initialize run metadata and output directories
     args_full = initialize(params=params,
@@ -60,12 +74,6 @@ def main(args_init):
                         #    tag=getattr(args, "tag"),
                         #    save_logs=getattr(args, "save_logs"))
                         )
-    
-    # # Step 5: Prepare proximity vectors from trace data and save
-    # data_prepped = prepare_proximity_data(data=data,
-    #                                       params=params,
-    #                                       dir_to_save=args_full["path_to_training"],
-    #                                       uid=args_full.get("uid", None))
 
     # # Step 6: Split into training and testing sets (if indicated in args)
     # data_train, data_test = split_proximity_data(data=data_prepped,
