@@ -30,8 +30,8 @@ Dependencies:
 """
 
 
-from topic3d.workflow._parsers import parse_cli_arguments_legacy
-from topic3d.workflow._dataops import load_data_file, split_proximity_data
+from topic3d.workflow._parsers import parse_cli_arguments_train
+from topic3d.workflow._dataops import load_data_file
 from topic3d.workflow.core import train_LDA_model
 
 

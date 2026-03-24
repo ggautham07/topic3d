@@ -1,5 +1,5 @@
 Workflow
-========
+=====================
 
 The ``topic3d runall`` workflow provides an end-to-end pipeline for topic
 decomposition of single-cell chromatin tracing proximity data.

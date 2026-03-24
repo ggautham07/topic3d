@@ -8,8 +8,8 @@ The tutorials are designed for beginner to intermediate users,
 including both experimentalists and computational biologists.
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
 
-   training
-   selecting_num_CFMs
+   pipeline
+   select_nCFMs
    postprocessing

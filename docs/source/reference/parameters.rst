@@ -1,5 +1,5 @@
-Topic Modelling Parameters
-=========================
+Parameters
+=====================
 
 This page describes the main parameters used in ``topic3d`` for training
 topic models on chromatin tracing proximity datasets.

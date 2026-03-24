@@ -46,7 +46,7 @@ def readable_duration(duration:Number):
 ##################################################################################################################
 
 
-def initialize_run(params: dict, path_to_data: str | list, dir_results: str = None):
+def initialize_cli_run(params: dict, path_to_data: str, dir_results: str = None):
     """
     Initialize a run directory and logging for a CLI invocation (simple layout).
 
@@ -76,6 +76,8 @@ def initialize_run(params: dict, path_to_data: str | list, dir_results: str = No
     """
 
     assert type(params) == dict
+    assert isinstance(path_to_data, str)
+    path_to_data = path.abspath(path_to_data)
     if dir_results is None:
         save_flag = False
     else:
@@ -84,19 +86,21 @@ def initialize_run(params: dict, path_to_data: str | list, dir_results: str = No
             assert path.isdir(dir_results.strip("###"))
         else:
             assert path.isdir(path.dirname(dir_results))
+        save_flag = True
 
     # Setting a unique ID for the training
-    uid = str(uuid4())[:8]
+    uid = str(uuid4())[:6]
     if save_flag:
         if dir_results.endswith("/###"):
             dir_training = dir_results.replace("/###", "/"+str(uid))
         else:
             dir_training = dir_results
+        dir_training = path.abspath(dir_training)
         makedirs(dir_training, exist_ok=False)
-        log_file = path.join(dir_training, f"logs.log")    # Setup the log file path (in the same folder as training)
-        logger:logging.Logger = setup_log(log_file)     # Setup logging to file and console
+        log_file = path.abspath(path.join(dir_training, f"logs.log"))    # Setup the log file path (in the same folder as training)
+        logger:logging.Logger = setup_log(name="topic3d", fp=log_file)     # Setup logging to file and console
     else:
-        logger:logging.Logger = setup_log_nosave()
+        logger:logging.Logger = setup_log_nosave(name="topic3d")
         dir_training = ""
         log_file = ""
 
@@ -120,6 +124,7 @@ def initialize_run(params: dict, path_to_data: str | list, dir_results: str = No
         json.dump(summary, open(path.join(dir_training, "summary.json"), mode="x"), indent=4)
 
     return summary, logger
+
 
 def quickcheck_proximity_data(data):
     assert isinstance(data, np.ndarray)
@@ -145,7 +150,7 @@ def initialize_LDA_model(params: dict,
 
     log_exists = False
     if logger is None:
-        logger = setup_log_nosave(name="topic3d-logger")
+        logger = setup_log_nosave(name="topic3d")
     else:
         assert isinstance(logger, logging.Logger)
         log_exists = True
@@ -227,7 +232,7 @@ def train_LDA_model(model: LatentDirichletAllocation,
 
     log_exists = False
     if logger is None:
-        logger = setup_log_nosave(name="topic3d-logger")
+        logger = setup_log_nosave(name="topic3d")
     else:
         assert isinstance(logger, logging.Logger)
         log_exists = True
@@ -277,7 +282,7 @@ def plot_learning_evaluation(perplexity_by_iter: dict,
 
     log_exists = False
     if logger is None:
-        logger = setup_log_nosave(name="topic3d-logger")
+        logger = setup_log_nosave(name="topic3d")
     else:
         assert isinstance(logger, logging.Logger)
         log_exists = True
@@ -294,6 +299,8 @@ def plot_learning_evaluation(perplexity_by_iter: dict,
         if not log_exists:
             kill_logger(logger)
     else:
+        if not log_exists:
+            kill_logger(logger)
         return fig
 
 
@@ -364,7 +371,7 @@ def decompose_data(data: np.ndarray,
 
     log_exists = False
     if logger is None:
-        logger = setup_log_nosave(name="topic3d-logger")
+        logger = setup_log_nosave(name="topic3d")
     else:
         assert isinstance(logger, logging.Logger)
         log_exists = True
@@ -379,6 +386,7 @@ def decompose_data(data: np.ndarray,
         decomposition = model.transform(data)
     except Exception:
         logger.exception(f"[{uid}] Error occurred during data decomposition")
+    logger.info(f"[{uid}] Data decomposed successfully")
 
     if not log_exists:
         kill_logger(logger)
@@ -397,7 +405,7 @@ def save_results(model: LatentDirichletAllocation,
 
     log_exists = False
     if logger is None:
-        logger = setup_log_nosave(name="topic3d-logger")
+        logger = setup_log_nosave(name="topic3d")
     else:
         assert isinstance(logger, logging.Logger)
         log_exists = True
