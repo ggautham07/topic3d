@@ -1,5 +1,5 @@
 Tutorials
-=========
+==================
 
 This section provides step-by-step guides for using **topic3d**
 on chromatin tracing datasets.
