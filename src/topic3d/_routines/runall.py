@@ -3,35 +3,32 @@ Main script for running topic decomposition on chromatin tracing data using topi
 
 This script:
 1. Parses CLI arguments.
-2. Loads raw or preprocessed proximity data.
-3. Initializes the output directory structure, configuration and logging if indicated.
-4. Prepares data for topic modeling by computing proximity vectors.
-5. Optionally splits data into training and testing subsets.
-6. Trains an LDA model and saves results.
+2. Loads raw FOF-CT data or preprocessed pairwise proximity data.
+3. Initializes the output directory and loggers.
+4. Trains an LDA model to capture CFMs.
+5. Decomposes the data.
+6. Saves the trained model and results.
 
 An example run:
 
-$ topic3d \
-    --data_file path/to/data/file.npy \
-    --results_base_dir path/to/create/results/folder \
-    --tag 'datasetname-tests' \
-    --save_logs \
-    --proximity_threshold 150 \
+$ topic3d runall \
+    --data_train_file path/to/data/file.npy \
+    --results_dir path/to/results/folder \
     --num_components 15 \
     --max_iter 500 \
-    --train_data_proportion 0.8
+    --evaluate_learning
 
-This script is intended to be called from the CLI wrapper `topic3d-run` and not directly by end users.
+This script is intended to be called from the CLI wrapper `topic3d runall` and not directly by end users.
 
 Dependencies:
 - topic3d.workflow._parsers
 - topic3d.workflow._dataops
-- topic3d.workflow.training
+- topic3d.workflow.core
 """
 
 from os import path
 import logging
-from topic3d.workflow._parsers import parse_cli_arguments_runall, parse_params_json
+from topic3d.workflow._parsers import parse_cli_arguments_train, parse_params_json
 from topic3d.workflow._dataops import load_data_file, prepare_proximity_data
 from topic3d.workflow.core import initialize_cli_run, initialize_LDA_model, train_LDA_model, plot_learning_evaluation, \
     decompose_data, save_results
@@ -41,7 +38,7 @@ def main(args_init):
     """Execute the topic decomposition pipeline based on CLI arguments."""
 
     # Step 1: Parse command-line arguments
-    args = parse_cli_arguments_runall(args_init)
+    args = parse_cli_arguments_train(args_init)
     if not args.data_train_file.endswith(".csv"):
         args.save_proximity_data = False
 

@@ -15,6 +15,7 @@
    userguide/problem
    userguide/approach
    userguide/workflow
+   userguide/interpretation
 
 .. toctree::
    :maxdepth: 3
@@ -35,6 +36,7 @@
 ``topic3d`` is a software package developed by the `Nollmann Lab <http://www.nollmannlab.org>`_ at the 
 `Center for Structural Biology <http://www.cbs.cnrs.fr>`_, a research unit of the `CNRS <http://www.cnrs.fr>`_ 
 and the `INSERM <http://www.inserm.fr>`_.
+
 
 About
 ------------
@@ -74,28 +76,6 @@ Quick start
       :img-alt:
       :link: quickstart/run
       :link-type: doc
-
-
-.. Installation
-.. ------------
-
-.. .. code-block:: bash
-
-..    pip install topic3d
-
-
-.. Quick Example
-.. ------------
-
-.. .. code-block:: bash
-
-..    topic3d runall \
-..       --data_train_file ./data/sample_sim_train.npy \
-..       --data_test_file ./data/sample_sim_test.npy \
-..       --results_dir ./results/ \
-..       --num_components 5 \
-..       --max_iter 100 \
-..       --random_state 64
 
 
 Citation

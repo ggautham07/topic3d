@@ -194,7 +194,7 @@ def parse_cli_arguments_decompose(args_init=None):
 
 
 # Main function for parsing arguments for topic3d runall ...
-def parse_cli_arguments_runall(args_init=None):
+def parse_cli_arguments_train(args_init=None):
     """
     Parse command-line arguments for `topic3d runall`.
 
