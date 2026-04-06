@@ -309,16 +309,15 @@ def _annotate_labels(ax, tick_dict, loc_dict, lib, fontsize=12, line_sep=0.04):
 
         # Draw the label manually
         if label_color == 'black':
-            if i % 5 == 0:
-                ax.text(
-                    x=tick, y=-0.01, s=bc,
-                    transform=ax.get_xaxis_transform(),
-                    rotation=0,
-                    ha='center', va='top',
-                    fontsize=fontsize,
-                    fontweight='bold',
-                    color=label_color  # ✅ this sets the correct color
-                    )
+            ax.text(
+                x=tick, y=-0.01, s=bc,
+                transform=ax.get_xaxis_transform(),
+                rotation=0,
+                ha='center', va='top',
+                fontsize=fontsize,
+                fontweight='bold',
+                color=label_color  # ✅ this sets the correct color
+                )
         else:
             ax.text(
                 x=tick, y=-0.01, s=bc,

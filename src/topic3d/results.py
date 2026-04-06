@@ -792,7 +792,7 @@ class Topic3DModelPool():
         return np.asarray(self.models)[np.argsort(scores) if by=="perplexity" else np.argsort(scores)[::-1]]
 
 
-    def find_best_model(self, by="coherence", data_used: np.ndarray = None):
+    def find_best_model(self, by="coherence", data_used: np.ndarray = None) -> LatentDirichletAllocation:
         """
         Find the best model by coherence or perplexity.
         """
@@ -863,7 +863,7 @@ class Topic3DModelPool():
         num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
 
         fig, ax = plt.subplots()
-        num_top_px = [10, 20, 30, 40]
+        num_top_px = [10, 25, 50]
 
         for n_px in num_top_px:
 
@@ -926,7 +926,7 @@ class Topic3DModelPool():
         result = self.compute_mean_empty_vs_num_CFMs()
 
         fig, ax = plt.subplots()
-        ax.plot(x=result.keys(), y=result.values())
+        ax.plot(result.keys(), result.values())
         ax.set_xlabel("# CFMs")
         ax.set_ylabel("mean empty CFMs")
         
