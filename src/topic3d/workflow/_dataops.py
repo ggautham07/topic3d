@@ -154,6 +154,8 @@ def prepare_proximity_data(data,
     except Exception:
         logger.exception(f"[{uid}] Proximity data failed conformity checks")
 
+    data_prep = PWProxArrayStack(data_prep[np.sum(data_prep, axis=1) > 0])  # filtering empty proximity maps
+
     if save_flag:
         np.save(path.join(dir_to_save, "proximity_data.npy"), data_prep)
         logger.info(f"[{uid}] Proximity data saved to results directory")

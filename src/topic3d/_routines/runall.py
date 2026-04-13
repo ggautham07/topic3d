@@ -28,7 +28,7 @@ Dependencies:
 
 from os import path
 import logging
-from topic3d.workflow._parsers import parse_cli_arguments_train, parse_params_json
+from topic3d.workflow._parsers import parse_cli_arguments_runall, parse_params_json
 from topic3d.workflow._dataops import load_data_file, prepare_proximity_data
 from topic3d.workflow.core import initialize_cli_run, initialize_LDA_model, train_LDA_model, plot_learning_evaluation, \
     decompose_data, save_results
@@ -38,7 +38,7 @@ def main(args_init):
     """Execute the topic decomposition pipeline based on CLI arguments."""
 
     # Step 1: Parse command-line arguments
-    args = parse_cli_arguments_train(args_init)
+    args = parse_cli_arguments_runall(args_init)
     if not args.data_train_file.endswith(".csv"):
         args.save_proximity_data = False
 

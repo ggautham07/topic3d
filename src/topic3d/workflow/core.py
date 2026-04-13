@@ -238,7 +238,7 @@ def train_LDA_model(model: LatentDirichletAllocation,
         log_exists = True
     
     quickcheck_proximity_data(data_train)
-    logger.info("Training data passed conformity checks")
+    logger.info(f"[{uid}] Training data passed conformity checks")
     
     quickcheck_LDA_model(model)
     logger.info(f"[{uid}] Model passed conformity checks")
@@ -380,7 +380,7 @@ def decompose_data(data: np.ndarray,
     logger.info(f"[{uid}] Data for decomposition passed conformity checks")
 
     quickcheck_LDA_model(model)
-    logger.info("LDA model for decomposition passed conformity checks")
+    logger.info(f"[{uid}] LDA model for decomposition passed conformity checks")
 
     try:
         decomposition = model.transform(data)
@@ -410,7 +410,7 @@ def save_results(model: LatentDirichletAllocation,
         assert isinstance(logger, logging.Logger)
         log_exists = True
     
-    logger.info(f"[{uid}] Attempting to save results")
+    logger.info(f"[{uid}] Attempting to save results...")
     try:
         results = Topic3DResult(model=model,
                                 decomposition=decomposition)

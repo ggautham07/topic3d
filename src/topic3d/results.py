@@ -761,8 +761,16 @@ class Topic3DResult:
 
 class Topic3DModelPool():
     
-    def __init__(self, model_file_paths: list):
-        self.models = [jl.load(model_fp) for model_fp in model_file_paths]
+    def __init__(self, models: list[str, LatentDirichletAllocation]):
+        self.models = []
+        for md in models:
+            if isinstance(md, str):
+                assert path.isfile(md)
+                md_ = jl.load(md)
+                assert isinstance(md_, LatentDirichletAllocation)
+                self.models.append(md_)
+            elif isinstance(md, LatentDirichletAllocation):
+                self.models.append(md)
         self.CFMs_by_model = [model.components_ for model in self.models]
         self.num_CFMs_by_model = np.asarray([len(CFMs) for CFMs in self.CFMs_by_model])
 
@@ -770,6 +778,23 @@ class Topic3DModelPool():
     @staticmethod
     def _get_model_perplexity(model):
         return model.bound_
+    
+
+    def filter(self, value, by="num_CFMs"):
+        """
+        Filter the model pool by a specific parameter value and return filtered models
+        """
+
+        mapping = {
+            "num_CFMs": "n_components",
+            "max_iter": "max_iter",
+            "random_state": "random_state",
+            "learning_method": "learning_method"
+        }
+        
+        models = [md for md in self.models if getattr(md, mapping[by]) == value]
+
+        return Topic3DModelPool(models=models)
 
 
     def rank_models(self, by="coherence", data_used: np.ndarray = None):
@@ -784,7 +809,7 @@ class Topic3DModelPool():
 
         if by == "coherence":
             scores = np.asarray([np.mean(Topic3DResult._compute_coherence_npmi_cos(components=model.components_,
-                                                                                   data_used=data_used)) \
+                                                                                   data_used=data_used)[0]) \
                                                                                     for model in self.models])
         elif by == "perplexity":
             scores = np.asarray([self._get_model_perplexity(model) for model in self.models])
@@ -816,11 +841,13 @@ class Topic3DModelPool():
             idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
             if by == "coherence":
                 scores.append(np.mean([Topic3DResult._compute_coherence_npmi_cos(components=self.models[i].components_,
-                                                                                 data_used=data_used) \
+                                                                                 data_used=data_used)[0] \
                                                                                     for i in idxs_reqd]))
             elif by == "perplexity":
                 scores.append(np.mean([self._get_model_perplexity(self.models[i]) for i in idxs_reqd]))
 
+        print(scores)
+        
         return num_CFMs_unique[np.argsort(scores) if by=="perplexity" else np.argsort(scores)[::-1]]
 
 
@@ -863,7 +890,7 @@ class Topic3DModelPool():
         num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
 
         fig, ax = plt.subplots()
-        num_top_px = [10, 25, 50]
+        num_top_px = [10, 20, 30]
 
         for n_px in num_top_px:
 
