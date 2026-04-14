@@ -962,6 +962,23 @@ class Topic3DModelPool():
             plt.close(fig)
         return fig
 
+    
+    # TODO options for thresholding to pull flat clusters
+    def cluster_CFMs(self, metric: str = "cosine"):
+
+        from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
+
+        CFMs_pooled = []
+        CFMs_pooled.extend(self.CFMs_by_model)
+
+        tree = linkage(CFMs_pooled, metric=metric)
+
+        clusters = fcluster(tree, t=0.5)
+
+        return clusters
+
+
+
 
     # TODO    
     # def embed_CFMs(method="UMAP"):
