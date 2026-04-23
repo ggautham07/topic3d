@@ -47,7 +47,7 @@ def initialize(params: dict, dir_results: str, path_to_data: str, tag: str = Non
     uid = str(uuid4())[:6]
     
     # TODO set folder pattern to highlight only most important parameters OR have a function to list and pull trainings
-    dir_pattern = f"{params['num_components']:02d}-components_threshold={params['proximity_threshold']}"
+    dir_pattern = f"{params["num_components"]:02d}-components_threshold={params["proximity_threshold"]}"
     dir_training = path.join(dir_results, tag, dir_pattern, f"{uid}")
     makedirs(dir_training, exist_ok=False)
 
@@ -140,9 +140,9 @@ def decompose(params: dict,
                         })
         if wflag:
             results.save(dir_to_save=dir_to_save)
-            results.plot_components(ordered=False, path_to_save=path.join(dir_to_save, "components.png"))
-            results.plot_components(ordered=True, path_to_save=path.join(dir_to_save, "components_sorted.png"))
-            results.plot_decomposition(path_to_save=path.join(dir_to_save, "decomposition.png"), cmap="Blues")
+            results.plot_components(ordered=False, path_to_save=path.join(dir_to_save, "components.svg"))
+            results.plot_components(ordered=True, path_to_save=path.join(dir_to_save, "components_sorted.svg"))
+            results.plot_decomposition(path_to_save=path.join(dir_to_save, "decomposition.svg"), cmap="Blues")
             logging.info(f"[{uid}] Saved results in {dir_to_save}")
         else:
             print(*summary, sep="\n")
@@ -158,7 +158,7 @@ def decompose(params: dict,
             if num_top_pixels < 3:
                 prop_top_pixels_all.append(np.max(prop_top_pixels_all)+0.5)
                 continue
-            logging.info(f"[{uid}] Taking {num_top_pixels} top pixels...")
+            logging.info(f"Taking {num_top_pixels} top pixels...")
             c_umass = results._compute_coherence_umass(components=results.components,
                                                         data_used=data_train,
                                                         num_top_pixels=num_top_pixels,

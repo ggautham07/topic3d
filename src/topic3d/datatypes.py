@@ -1,26 +1,33 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Data types for topic decomposition (:mod:`topic3d.datatypes`)
-==============================================================
+Data types for chromatin-tracing proximity data (:mod:`topic3d.datatypes`)
+=======================================================================
 
-This module defines core data structures for handling spatial data in chromatin 
-tracing experiments and polymer modeling. It includes:
+This module defines NumPy-backed containers used throughout *topic3d* to represent
+single-cell 3D traces and their derived pairwise quantities.
 
-- `CoordsArrayStack`: a subclass of `np.ndarray` for managing stacks of 3D coordinate traces.
-- `PWDistArrayStack`: a subclass of `np.ndarray` for managing stacks of pairwise distance vectors.
-  
-Both classes support filtering, imputation, statistical aggregation, and 
-visualization (via `topic3d.visualization`) of chromatin structure data. These 
-are designed to be flexible and memory-efficient, while offering high-level 
-methods for preprocessing and analyzing conformational data.
+The two most common representations are:
 
-Intended for use in the `topic3d` pipeline after trace extraction and before
-or during topic decomposition and modeling.
+- :class:`~topic3d.datatypes.CoordsArrayStack`: stacks of 3D coordinates with shape
+  ``(num_items, num_bc, 3)`` (or ``(num_bc, 3)`` for a single item).
+- :class:`~topic3d.datatypes.PWDistArrayStack`: stacks of flattened pairwise-distance
+  vectors with shape ``(num_items, num_bc * (num_bc - 1) // 2)``.
 
-Authors
--------
-ggautham07, jbfiche, marcnol
+Both are implemented as subclasses of :class:`numpy.ndarray` so they can be passed
+directly into NumPy/SciPy/scikit-learn routines, while still offering domain-specific
+helpers for:
+
+- quality control (detection efficiency, filtering),
+- imputation of missing coordinates,
+- conversion between distances and proximities,
+- ensemble statistics and visualization.
+
+Notes
+-----
+Missing values are represented with ``NaN``. Many methods use NaN-aware reductions
+(e.g., :func:`numpy.nanmean`).
+
 """
 
 
@@ -33,8 +40,11 @@ from __future__ import annotations      # required for type hinting a class meth
 import warnings
 from typing import Iterable
 from numbers import Number
+from os import path
+from io import StringIO
 
 import numpy as np
+import pandas as pd
 from scipy.spatial.distance import squareform, pdist
 from scipy.linalg import issymmetric
 
@@ -47,47 +57,275 @@ from . import visualization as vzl
 # =============================================================================
 
 
+class FOFTraceDataCoreTable():
+    """
+    Custom class to handle the trace data core table following the FOF-CT format.
+
+    Only designed for ball-and-stick (polymeric) chromatin tracing datasets.
+    """
+
+    def __init__(self, path_to_file):
+
+        def _find_and_split(full_seq: str, sub_seq: str) -> list:
+            """            
+            Finds the first occurrence of `sub_seq` in `full_seq` and splits it at the first newline after.
+
+            Internal function used to extract header rows from Fish Omics Format (FOF) data.
+            """
+            return full_seq[full_seq.index(sub_seq):].split("\n", maxsplit=1)
+        
+        def _extract_metadata_fof_raw(contents: str):
+            """
+            Extract header rows starting with `##` from raw FOF trace table file and copy metadata into dictionary.
+            """
+            assert isinstance(contents, str)
+            
+            metadata = {}
+            for line in contents[:5000].splitlines():
+                if line.lower().startswith("##columns"):
+                    break
+                elif line.startswith("##"):
+                    line_proc = line.replace("##", "").replace(",", "").lower().split("=")
+                    metadata[line_proc[0]] = line_proc[1]
+            
+            return metadata
+
+        assert path.isfile(path_to_file)
+
+        # load the data and organize them as a dataframe
+        contents = open(path_to_file, mode="r").read()  # load all contents as string
+        metadata = _extract_metadata_fof_raw(contents)
+        colnames_raw, data_raw = _find_and_split(contents, "##columns")  # get columns and table from raw data
+        colnames = colnames_raw[colnames_raw.index("(")+1:colnames_raw.index(")")].split(",")   # get column names
+        colnames = [colname.strip() for colname in colnames]  # strip whitespace from column names
+        data = pd.read_csv(StringIO(data_raw), sep=",", header=None)  # parse raw data into dataframe
+        try:
+            assert len(data.columns) == len(colnames)
+        except AssertionError:
+            print("Column names and number of data columns mismatch!")
+            print("Attempting naive matching...")
+            data.columns = colnames[:len(data.columns)]
+            try:
+                assert data.X.dtype == float
+                assert data.Y.dtype == float
+                assert data.Z.dtype == float
+                assert data.Chrom.dtype == object and data.Chrom.str.contains("chr").all()
+                assert data.Chrom_Start.dtype == int
+                assert data.Chrom_End.dtype == int
+            except AssertionError:
+                print("Matching unsuccessful. Correct raw data and try again.")
+                raise ValueError("Number of data columns is different from length of column names.")
+        else:
+            data.columns = colnames  # assign column names to trace table
+
+        self.table: pd.DataFrame = data.copy()
+        self.unit: str = metadata["xyz_unit"]
+        self.assembly: str = metadata["genome_assembly"]
+        # self.version = metadata["fof-ct_version"]
+        self.extract_bc_bins()
+
+
+    @staticmethod
+    def _convert_coords_to_nm(coords, unit):
+
+        mapping = {
+            "nm": 1,
+            "nanometer": 1,
+            "micron": 1e3,
+            "mm": 1e6,
+            "millimeter": 1e6,
+            "cm": 1e8,
+            "centimeter": 1e8,
+        }
+
+        return coords * mapping[unit]
+
+    
+    def extract_bc_bins(self, check_contiguity: bool = False, set_attr: bool = True):
+        """
+        Extract barcode target bins from the full table based on `Chrom_Start` and `Chrom_End`
+        """
+
+        chrom_starts = np.sort(self.table.Chrom_Start.unique())
+        chrom_ends = np.sort(self.table.Chrom_End.unique())
+        assert len(chrom_starts) == len(chrom_ends)
+        
+        bc_bins = np.hstack((chrom_starts[..., np.newaxis], chrom_ends[..., np.newaxis]))
+        num_bc = len(bc_bins)
+        bc_ids = np.arange(num_bc)
+        bc_bins_sizes = bc_bins[:, 1] - bc_bins[:, 0]
+        if check_contiguity:
+            assert np.all(np.isclose(bc_bins[1:, 0] - bc_bins[:-1, 1], 0, atol=1))
+        
+        bc_bins_df = pd.DataFrame({
+            "Barcode_ID": bc_ids,
+            "Chrom_Start": chrom_starts,
+            "Chrom_End": chrom_ends,
+            "Size": bc_bins_sizes,
+            })
+        
+        if set_attr:
+            self.bc_bins = bc_bins_df.copy()
+            self.num_bc = num_bc
+
+        return bc_bins_df
+            
+
+    def treat(self, inplace=True):
+        """
+        Treat the original data to fix common errors in publicly available FOF-CT data and convert units to nm
+
+        Note: This treatment is designed only to allow extraction of the stack of traces correctly for `topic3d`. For 
+        accurate results, use better pre-treated FOF-CT data.
+
+        Errors include duplicated barcodes in single traces, and global `Trace_IDs` in the presence of `Cell_IDs`.
+        Duplicated barcodes are removed and trace IDs are replaced by combining them with cell IDs. Note that this
+        does not work if combined Trace and Cell IDs are still not sufficient to ensure uniqueness (for example, 
+        when `Sub_Cell_ROI_ID` and `Extra_Cell_ROI_ID` also need to be accounted for).
+        """
+
+        # convert Trace_IDs and Cell_IDs to strings 
+        data = self.table.astype({"Trace_ID": str})
+        extra_col_flag = False
+        if "Cell_ID" in self.table.columns:
+            extra_col_flag = True
+            data = data.astype({"Cell_ID": str})
+        
+        # replace Trace_ID by combining Trace_ID and Cell_ID for each row to make it truly unique
+        if extra_col_flag:  # not required when no Cell_ID
+            trace_IDs_all = []
+            for _, row in data.iterrows():   
+                trace_IDs_all.append(str(row["Cell_ID"]) + "_" + str(row["Trace_ID"]))
+            data.Trace_ID = trace_IDs_all.copy()
+        else:
+            trace_IDs_all = data.Trace_ID.to_list()
+        trace_IDs_unique = np.unique(trace_IDs_all)
+        # self.num_traces = len(trace_IDs_unique)
+        print("Reallotted Trace_IDs to ensure uniqueness")
+    
+        # for each trace, drop duplicated barcodes
+        dupli_flag = False
+        data_filt = []
+        for tID in trace_IDs_unique:
+            data_tID = data[data.Trace_ID == tID]
+            if not dupli_flag:
+                _, counts = np.unique(data_tID.Chrom_Start.to_list(), return_counts=True)
+                if np.any(counts > 1):
+                    dupli_flag = True
+            data_filt.append(data_tID.drop_duplicates(subset="Chrom_Start", keep=False, inplace=False))
+        data_filt = pd.concat(data_filt)
+        if dupli_flag:
+            print("Duplicate barcode coordinates were found and dropped")
+        else:
+            print("No duplicate barcode coordinates were found")
+
+        # conversion of X, Y, Z to nm based on initial unit
+        data_filt[["X", "Y", "Z"]] = self._convert_coords_to_nm(data_filt[["X", "Y", "Z"]], unit=self.unit)
+        print("Converted data to nm based on unit provided in raw data")
+
+        if inplace:
+            self.table_org = self.table.copy()
+            self.table = data_filt.copy()
+            self.extract_bc_bins()
+            self.num_traces = len(np.unique(self.table.Trace_ID))
+            return None
+        return data_filt
+
+
+    def extract_traces(self, path_to_save: str = ""):
+        """
+        Extract trace data from a loaded and treated FOF-CT table and reformat into a 3D NumPy array.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (num_traces, num_barcodes, 3) containing X, Y, Z coordinates.
+        
+        Examples
+        --------
+        >>> traces = raw_data._extract_traces_from_fof()
+        """
+
+        # initilize empty array
+        trace_arr = np.empty((self.num_traces, self.num_bc, 3))
+        trace_arr[:] = np.nan
+        # for each trace ID, extract traces and fill array
+        for i, trID in enumerate(np.unique(self.table.Trace_ID)):
+            data_trID = self.table[self.table.Trace_ID == trID]
+            bcs_trID = []
+            for st in data_trID["Chrom_Start"].to_list():
+                bcs_trID.append(self.bc_bins.loc[self.bc_bins["Chrom_Start"] == st, "Barcode_ID"].iloc[0])
+            assert len(bcs_trID) == len(np.unique(bcs_trID))
+            coords = np.squeeze(data_trID[["X", "Y", "Z"]].to_numpy())
+            trace_arr[i, bcs_trID] = coords[:]
+        
+        if isinstance(path_to_save, str) and len(path_to_save) > 0:
+            np.save(file=path_to_save, arr=trace_arr, allow_pickle=False)
+            return None
+        return CoordsArrayStack(trace_arr)
+    
+
+    # TODO
+    # def save(path_to_file: str):
+    #     pass
+
+
+
 class CoordsArrayStack(np.ndarray):
     """
-    A stack of arrays of 3D coordinates, used for representing collections of conformations from chromatin tracing
-    experiments or polymer simulations.
+    Stack of 3D chromatin traces.
+
+    A :class:`numpy.ndarray` subclass representing a collection of chromatin traces
+    (experimental chromatin tracing or polymer simulations) as 3D coordinates.
+
+    The underlying array has shape ``(num_items, num_bc, 3)``, where:
+
+    - ``num_items`` is the number of single-cell traces / conformations,
+    - ``num_bc`` is the number of barcodes (loci) per trace,
+    - the last dimension corresponds to ``(x, y, z)``.
+
+    Coordinates may contain ``NaN`` entries for missing loci.
 
     Attributes
     ----------
     num_items : int
-        Number of individual items in the stack.
+        Number of items in the stack.
     num_bc : int
-        Number of barcodes (points) per item.
+        Number of barcodes (loci) per item.
 
-    Methods
-    -------
-    center_of_mass()
-        Compute the center of mass of each conformation.
-    pwds()
-        Compute pairwise distances within each conformation.
-    efficiency(by="item")
-        Compute barcode detection efficiency.
-    filter(min_efficiency=60, by="item")
-        Filter out low-quality traces.
-    impute(method="naive")
-        Impute missing positions using a specified method.
-    plot_barcode_efficiency(path_to_save="", include_imputed=False)
-        Plot barcode-wise detection efficiency.
+    See Also
+    --------
+    PWDistArrayStack
+        Pairwise-distance representation derived from coordinates.
 
     Examples
     --------
     >>> stack = CoordsArrayStack(np.random.rand(100, 30, 3))
-    >>> coms = stack.center_of_mass()
-    >>> filtered = stack.filter(min_efficiency=70)
-    >>> imputed = stack.impute(method="naive")
+    >>> stack.num_items, stack.num_bc
+    (100, 30)
+    >>> pwds = stack.pwds()
+    >>> eff = stack.efficiency(by="barcode")
     """
 
     # Initializing using __new__ instead of __init__ in line with Numpy
-    def __new__(cls, arr:np.ndarray):
-        """Create a new instance of CoordsArrayStack from a NumPy array."""
+    def __new__(cls, arr: np.ndarray):
+        """
+        Create a :class:`~topic3d.datatypes.CoordsArrayStack` from a NumPy array.
+
+        Parameters
+        ----------
+        arr : numpy.ndarray
+            Coordinate array of shape ``(num_items, num_bc, 3)`` or ``(num_bc, 3)``.
+            Missing coordinates can be encoded as NaNs.
+
+        Returns
+        -------
+        CoordsArrayStack
+            A view on ``arr`` with convenience attributes and methods.
+        """
 
         assert isinstance(arr, np.ndarray)
-        assert arr.ndim == 2 or 3
+        assert arr.ndim in (2, 3)
         assert arr.shape[-1] == 3
 
         if arr.ndim == 2:
@@ -123,7 +361,7 @@ class CoordsArrayStack(np.ndarray):
         return False
 
 
-    def center_of_mass(self) -> np.ndarray:
+    def compute_CoM(self) -> np.ndarray:
         """
         Compute the center of mass for each trace.
 
@@ -142,13 +380,13 @@ class CoordsArrayStack(np.ndarray):
         return np.nanmean(self.data, axis=1)    # using self results in another CoordsArrayStack
 
 
-    def pwds(self) -> PWDistArrayStack:
+    def compute_pwds(self) -> PWDistArrayStack:
         """
         Compute the pairwise distances between all barcodes within each item.
 
         Returns
         -------
-        PairwiseArrayStack
+        PWDistArrayStack
             An array of shape (num_items, num_bc*(num_bc-1)//2), containing pairwise distances per trace.
 
         Examples
@@ -165,14 +403,14 @@ class CoordsArrayStack(np.ndarray):
         return pwds
 
 
-    def efficiency(self, by: str = "barcode") -> np.ndarray:
+    def compute_efficiency(self, by: str = "barcode") -> np.ndarray:
         """
         Compute the detection efficiency of barcodes or traces.
 
         Parameters
         ----------
-        by : str, optional
-            Either "barcode" (default) or "item"/"trace".
+        by : {"barcode", "item", "trace"}, default="barcode"
+            Whether to compute efficiency per barcode across items, or per item.
 
         Returns
         -------
@@ -200,7 +438,7 @@ class CoordsArrayStack(np.ndarray):
         Parameters
         ----------
         min_efficiency : float
-            Minimum percentage of barcodes that must be detected in a trace to keep it.
+            Minimum detection efficiency (in percent, 0–100).
         by : str, optional
             Either "barcode" or "item"/"trace" (default).
 
@@ -216,7 +454,7 @@ class CoordsArrayStack(np.ndarray):
         (87, 30, 3)
         """
 
-        effs = self.efficiency(by=by)
+        effs = self.compute_efficiency(by=by)
         idxs = np.argwhere(effs >= min_efficiency)
         if return_idxs_only:
             return idxs
@@ -246,7 +484,7 @@ class CoordsArrayStack(np.ndarray):
         """
 
         method = method.lower()
-        assert method in ["naive", "jost"]
+        assert method in ["naive"]
         if np.all(~np.isnan(self)):
             warnings.warn("No NaNs to impute in the stack")
             return self
@@ -258,63 +496,9 @@ class CoordsArrayStack(np.ndarray):
             is_missing = np.isnan(stack_imp[:, 1:-1])   # check missing coordinates
             stack_imp[:, 1:-1][is_missing] = neighbor_means[np.where(is_missing)]   # replace NaNs with mean pos
 
-        elif method == "jost":
-            # needs the mean-squared pairwise distance matrix, regularized
-            pwds_mean2 = squareform(self.pwds().ensemble(method="mean") ** 2)
-            pwds_mean2 = PWDistArrayStack._regz_pw_sq_matrix(pwds_mean2)
-            assert pwds_mean2.ndim == 2
-            for n in range(self.num_items):
-                tr = stack_imp[n][:]
-                assert tr.shape[-1] == 3
-                assert pwds_mean2.shape[0] == self.num_bc
-                # missing positions
-                missing_pos_bool = np.isnan(tr[:,0])
-                available_pos_bool = np.logical_not(missing_pos_bool)
-                s = np.sum(available_pos_bool)
-                # reorganizing each axis' coordinates
-                x = tr[:,0]
-                y = tr[:,1]
-                z = tr[:,2]
-                x_reorg = np.concatenate((x[available_pos_bool], x[missing_pos_bool]))
-                y_reorg = np.concatenate((y[available_pos_bool], y[missing_pos_bool]))
-                z_reorg = np.concatenate((z[available_pos_bool], z[missing_pos_bool]))
-                # reorganizing matrix as well
-                missing_idxs = np.argwhere(missing_pos_bool).T[0]
-                available_idxs = np.argwhere(available_pos_bool).T[0]
-                new_order = np.concatenate((available_idxs, missing_idxs))
-                mean2_reorg = PWDistArrayStack._reorg_pw_sq_matrix(pwds_mean2, new_order)
-                # get sigma matrix
-                sigma = PWDistArrayStack._cov_from_D2_matrix(mean2_reorg)
-                mu = np.zeros((1, self.num_bc-1))
-                mu_available = mu[:,:s-1]
-                mu_missing = mu[:,s-1:]
-                sigma_nz_nz = sigma[0:s-1, 0:s-1]
-                sigma_z_z = sigma[s-1:, s-1:]
-                sigma_z_nz = sigma[s-1:, 0:s-1]
-                sigma_nz_z = sigma[0:s-1, s-1:]
-                # infer conditional mean and sigma
-                mucondx = mu_missing + \
-                    (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((x_reorg[1:s] - x_reorg[0]) - mu_available).T)).T
-                mucondy = mu_missing + \
-                    (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((y_reorg[1:s] - y_reorg[0]) - mu_available).T)).T
-                mucondz = mu_missing + \
-                    (sigma_z_nz @ (np.linalg.inv(sigma_nz_nz) @ ((z_reorg[1:s] - z_reorg[0]) - mu_available).T)).T
-                sigcond = sigma_z_z - ((sigma_z_nz @ np.linalg.inv(sigma_nz_nz)) @ sigma_nz_z)
-                # infer missing positions given conditional for each axis
-                x_missing = x_reorg[0] + mucondx
-                y_missing = y_reorg[0] + mucondy
-                z_missing = z_reorg[0] + mucondz
-                std = np.sqrt(np.diag(sigcond))
-                # final inferred coordinates and the error
-                inf_coords = np.squeeze(np.concatenate((x_missing.T, y_missing.T, z_missing.T), axis=1))
-                std_xyz = np.asarray([std, std, std])
-                # replace missing coordinates with the inferred ones
-                tr[missing_idxs,:] = inf_coords
-                stack_imp[n] = tr[:]
-
         stack_imp = CoordsArrayStack(stack_imp)
 
-        return (stack_imp, std_xyz) if method == "jost" else stack_imp
+        return stack_imp
 
 
     # TODO include plotting for imputed data, currently not possible due to bar plot code structure
@@ -338,7 +522,7 @@ class CoordsArrayStack(np.ndarray):
 
         Examples
         --------
-        >>> fig = coords_stack.plot_barcode_efficiency("figs/efficiency.png", include_imputed=True)
+        >>> fig = coords_stack.plot_bc_efficiency("figs/efficiency.png", include_imputed=True)
         >>> fig.show()
         """
 
@@ -346,7 +530,7 @@ class CoordsArrayStack(np.ndarray):
 
         wflag = self._set_figsave_flag(path_to_save)
 
-        effs = self.efficiency(by="barcode")
+        effs = self.compute_efficiency(by="barcode")
         # if include_imputed:
         #     stack_imp = self.impute(method="naive")
         #     effs_imp = stack_imp.efficiency(by="barcode")
@@ -362,46 +546,26 @@ class CoordsArrayStack(np.ndarray):
         return fig
 
 
-
-class PWDistArrayStack(np.ndarray):
+class _PWArrayStack(np.ndarray):
     """
-    A stack of pairwise distance vectors (1D) with utilities for matrix operations and visualization.
-    
-    Used to represent and process collections of intra-trace pairwise distances in chromatin tracing or
-    polymer modeling.
+    Base class for stacks of flattened pairwise vectors.
 
-    Parameters
-    ----------
-    arr : np.ndarray
-        A 1D or 2D array where each vector represents the pairwise distances (flattened) of a trace.
-        Must correspond to the binomial coefficient (n choose 2) for some integer n ≥ 2.
+    The flattened representation uses the same convention as
+    :func:`scipy.spatial.distance.squareform`: for a locus count ``num_bc``, each
+    item is stored as a 1D vector of length ``num_bc * (num_bc - 1) // 2``.
 
-    Attributes
-    ----------
-    num_items : int
-        Number of traces (1 if input was 1D).
-    num_bc : int
-        Number of barcodes (points) per trace, inferred from vector length.
+    Subclasses provide semantics for what the vector encodes (e.g., distances or
+    proximity values).
 
-    Methods
-    -------
-    ensemble(method='mean', regularize=False)
-        Perform ensemble operation across the stack (mean, median, etc.).
-    proximity(threshold, hardness=1, keep_NaNs=False)
-        Compute proximity from distances using a threshold and hardness.
-    filter(min_efficiency=0.1)
-        Filter items based on missing data.
-    efficiency(by='pixel')
-        Compute detection efficiency by pixel or by item.
-    plot_pwds_avg(path_to_save, method='mean', form='triangle', cmap='Reds_r')
-        Plot ensemble-average pairwise distance matrix.
-    plot_proximity_avg(path_to_save, threshold, hardness=1, form='triangle', cmap='Reds')
-        Plot ensemble-average proximity matrix.
+    Notes
+    -----
+    This class validates that the last dimension can be interpreted as
+    ``n choose 2`` for some integer ``n >= 2``.
     """
 
     # Initializing using __new__ instead of __init__ in line with Numpy
     def __new__(cls, arr:np.ndarray):
-        """ Create a new PairwiseArrayStack instance from a distance matrix or vector."""
+        """Create a new instance from a pairwise-distance vector stack."""
         assert isinstance(arr, np.ndarray)
         assert arr.ndim == 1 or 2
     
@@ -423,7 +587,7 @@ class PWDistArrayStack(np.ndarray):
     
 
     def __str__(self):
-        return f"PairwiseArrayStack\n# items: {self.num_items}\n# barcodes: {self.num_bc}"
+        return f"PWArrayStack\n# items: {self.num_items}\n# barcodes: {self.num_bc}"
 
 
     # Since new attributes were added in __new__
@@ -442,152 +606,7 @@ class PWDistArrayStack(np.ndarray):
         return False
 
 
-    # TODO class method to check symmetric matrices in the stack
-    @staticmethod
-    def _make_pw_sq_matrix_symm(matrix:np.ndarray) -> np.ndarray:
-        """
-        Ensure the matrix is symmetric by copying upper triangle to lower (or averaging).
-
-        Parameters
-        ----------
-        matrix : np.ndarray
-            Square matrix.
-
-        Returns
-        -------
-        np.ndarray
-            Symmetric matrix.
-        """
-
-        assert matrix.ndim == 2
-
-        if issymmetric(matrix):
-            return matrix
-        return matrix + matrix.T - np.diag(np.diag(matrix)) if (np.tril(matrix, k=-1) == 0).all() \
-            else (matrix + matrix.T) / 2
-
-
-    @staticmethod
-    def _cov_from_D2_matrix(matrix:np.ndarray) -> np.ndarray:
-        """
-        Compute covariance matrix from mean-squared distance matrix assuming a Gaussian distribution.
-
-        Parameters
-        ----------
-        matrix : np.ndarray
-            Symmetric distance² matrix.
-
-        Returns
-        -------
-        np.ndarray
-            Covariance matrix.
-        """
-
-        assert matrix.ndim == 2
-        assert issymmetric(matrix)
-        num_bc = matrix.shape[0]
-
-        cov = np.zeros((num_bc-1, num_bc-1))
-        np.fill_diagonal(cov, matrix[0,1:])
-        for i in range(num_bc-1):
-            for j in range(i+1, num_bc-1):
-                cov[i,j] = (cov[i,i] + cov[j,j] - matrix[i+1, j+1]) / 2
-        
-        cov = PWDistArrayStack._make_pw_sq_matrix_symm(cov)
-        return cov
-
-
-    @staticmethod
-    def _D2_matrix_from_cov(cov:np.ndarray) -> np.ndarray:
-        """
-        Compute mean-squared distance matrix from covariance matrix assuming a Gaussian distribution.
-
-        Parameters
-        ----------
-        cov : np.ndarray
-            Covariance matrix.
-
-        Returns
-        -------
-        np.ndarray
-            Symmetric mean-squared distance matrix.
-        """
-
-        assert cov.ndim == 2
-        N = cov.shape[0] + 1
-
-        mean2 = np.zeros((N, N))    
-        mean2[0,1:] = np.diag(cov)
-        mean2 = PWDistArrayStack._make_pw_sq_matrix_symm(mean2)
-        for i in range(1, N):
-            for j in range(i+1, N):
-                mean2[i,j] = -2 * cov[i-1, j-1] + cov[i-1, i-1] + cov[j-1, j-1]
-                mean2[j,i] = mean2[i,j]
-        np.fill_diagonal(mean2, 0)
-
-        return mean2
-
-
-    @staticmethod
-    def _regz_pw_sq_matrix(matrix:np.ndarray, hack=False) -> np.ndarray:
-        """
-        Make matrix positive definite by adjusting negative eigenvalues (i.e., regularize).
-
-        Parameters
-        ----------
-        matrix : np.ndarray
-            Square matrix.
-        hack : bool
-            If True, forces smallest positive eigenvalue to small constant.
-
-        Returns
-        -------
-        np.ndarray
-            Regularized matrix.
-        """
-
-        assert matrix.ndim == 2
-        assert issymmetric(matrix)
-
-        eigenvals, eigenvecs = np.linalg.eig(matrix)
-        if np.all(eigenvals > 0) and hack:
-            eigenvals[np.argmin(eigenvals)] = 1e-06
-        else:
-            eigenvals[eigenvals < 0] = 1e-06
-        matrix_reg = eigenvecs @ np.diag(eigenvals) @ np.linalg.inv(eigenvecs)
-        # TODO without the following step, will the matrix be symmetric?
-        matrix_reg = PWDistArrayStack._make_pw_sq_matrix_symm(matrix_reg)
-        return matrix_reg
-
-
-    # TODO finish the vectorised implementation for a 3D stack (now works for a 2D matrix)
-    @staticmethod
-    def _reorg_pw_sq_matrix(matrix:np.ndarray, idxs) -> np.ndarray:      
-        """
-        Reorder a matrix using a new set of indices.
-
-        Parameters
-        ----------
-        matrix : np.ndarray
-            Pairwise matrix to reorder.
-        idxs : array-like
-            New ordering of indices.
-
-        Returns
-        -------
-        np.ndarray
-            Reordered matrix.
-        """
-
-        assert matrix.ndim == 2
-        # assert issymmetric(matrix)
-        assert len(np.unique(idxs)) == len(idxs)
-        assert np.all(np.logical_and(idxs >= 0, idxs < matrix.shape[0]))
-
-        return matrix[:,idxs][idxs]
-
-
-    def efficiency(self, by: str = "pixel") -> np.ndarray:
+    def compute_efficiency(self, by: str = "pixel") -> np.ndarray:
         """
         Compute detection efficiency by pixel or item.
 
@@ -610,7 +629,7 @@ class PWDistArrayStack(np.ndarray):
         return effs
 
 
-    def ensemble(self, method="mean", regularize=False) -> np.ndarray:
+    def compute_ensemble_measure(self, method="mean", regularize=False) -> np.ndarray:
         """
         Perform an ensemble operation (mean, median, etc.) across the stack.
 
@@ -641,50 +660,6 @@ class PWDistArrayStack(np.ndarray):
             else ensemble_matrix
 
 
-    # NOTE JB's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
-    def proximity(self, threshold:Number, hardness=1, keep_NaNs=False) -> np.ndarray:
-        """
-        Convert distances into proximity values using a sigmoid function or hard threshold.
-
-        Hardness describes sigmoid slope, 0 < hardness <= 1, where 1 means hard.
-        Ideal value for softness visually appears to be 0.4. Values up to 0.2 may be too soft.
-
-        Parameters
-        ----------
-        threshold : float
-            Distance cutoff.
-        hardness : float
-            Controls sigmoid slope. 1 is hard threshold; lower is softer.
-        keep_NaNs : bool
-            Whether to retain NaNs.
-
-        Returns
-        -------
-        np.ndarray
-            Proximity values in [0, 1].
-        """
-
-        assert isinstance(threshold, Number)
-        assert not ((self == 0) | (self == 1)).all()
-        assert threshold <= np.nanmax(self)
-        assert isinstance(hardness, Number) and 0 < hardness <= 1
-
-        if hardness < 0.2:
-            warnings.warn(f"Input hardness value of {hardness} may be too soft")
-        
-        mode = "hard" if hardness == 1 else "soft"
-
-        if mode == "hard":
-            if keep_NaNs:
-                return np.where(np.isnan(self), np.nan, self <= threshold)
-            return (self <= threshold).astype(int)
-
-        out = 1 / (1 + np.exp(hardness * (self - threshold)))
-        if keep_NaNs:
-            return out
-        return np.nan_to_num(out, nan=0, copy=True)
-
-
     def filter(self, min_efficiency: Number = 0.6, return_idxs_only=True):
         """
         Remove matrices with insufficient barcode detection.
@@ -709,22 +684,9 @@ class PWDistArrayStack(np.ndarray):
         return idxs, out
 
 
-    # TODO for normalization of pairwise distances from JB's code, available in format_FOF_data.py
-    def normalize(self, ref: np.ndarray, method: str = "MMSF") -> PWDistArrayStack:
-        """
-        Normalize the stack by different methods while comparing to a reference dataset
-
-        MMSF: median-median scaling factor
-
-        JB's method based on R(s) yet to be implemented here
-        """
-    
-        method = method.strip().upper()
-
-        if method == "MMSF":
-            scaling_factor = np.nanmedian(ref) / np.nanmedian(self)
-
-            return self[:] * scaling_factor
+    # # TODO for normalization of pairwise distances from JB's code, available in format_FOF_data.py
+    # def normalize(self):
+    #     return
 
 
     def split_random(self, proportion: Number = 0.5, return_idxs_only=True):
@@ -785,7 +747,7 @@ class PWDistArrayStack(np.ndarray):
 
         map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
-        effs = self.efficiency(by="pixel")
+        effs = self.compute_efficiency(by="pixel")
         fig = map_form_fn[form](items=[effs],
                                 cmap="magma",
                                 cbar_label="efficiency %")
@@ -794,24 +756,26 @@ class PWDistArrayStack(np.ndarray):
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
         return fig
-        
+    
 
-    def plot_pwds_avg(self, method: str = "mean",
-                      path_to_save: str = "",
-                      form: str = "triangle", cmap: str = "Reds_r"):
+    def plot_ensemble_measure(self, method: str = "mean",
+                              path_to_save: str = "",
+                              form: str = "triangle", cmap: str = "Reds", cbar_label: str = None):
         """
-        Plot the ensemble-averaged pairwise distance matrix across the stack.
+        Plot the ensemble-averaged matrix across the stack.
 
         Parameters
         ----------
         path_to_save : str
             Path (with file extension) where the figure will be saved.
         method : str, default="mean"
-            Aggregation method to compute ensemble average. Supported values: "mean", "median".
+            Aggregation method to compute ensemble measure. Supported values same as for `compute_ensemble_measure`
         form : str, default="triangle"
             Format of the plot: "triangle" for lower triangle heatmap, or "square" for full matrix heatmap.
         cmap : str, default="Reds_r"
             Matplotlib colormap to use for the plot.
+        cbar_label : str, default=None
+            If string is passed, string. If None, will be method + "value"
 
         Returns
         -------
@@ -820,22 +784,25 @@ class PWDistArrayStack(np.ndarray):
 
         Examples
         --------
-        >>> stack.plot_pwds_avg("figs/avg_pwds.svg", method="mean", form="square", cmap="viridis")
+        >>> stack.plot_ensemble_avg("figs/avg_pwds.svg", method="mean", form="square", cmap="viridis")
         """
 
         assert isinstance(path_to_save, str)
         assert form in ["triangle", "square"]
-        assert isinstance(method, str) and method in ["mean", "median"]
+        if cbar_label is None:
+            cbar_label = ""
+        else:
+            cbar_label = str(cbar_label)
 
         wflag = self._set_figsave_flag(path_to_save)
 
         map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
 
-        matrix = self.ensemble(method=method)
+        matrix = self.compute_ensemble_measure(method=method)
         fig = map_form_fn[form](items=[matrix],
                                 titles=[f"$n = ${self.num_items:,}"],
                                 cmap=cmap,
-                                cbar_label=f"{method} distance")
+                                cbar_label=f"{method} value" if cbar_label is None else cbar_label)
         
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
@@ -843,10 +810,11 @@ class PWDistArrayStack(np.ndarray):
         return fig
     
 
-    def plot_pwds_random_examples(self, num_items: int = 9, random_seed: int = None,
-                                  path_to_save: str = "", form: str = "triangle", cmap="Reds_r", include_cbar=True):
+    def plot_random_examples(self, num_items: int = 9, random_seed: int = None,
+                             path_to_save: str = "", form: str = "triangle", cmap="Reds",
+                             include_cbar=True, cbar_label: str = None):
         """
-        Plot a set of randomly-picked PWD maps from the dataset.
+        Plot a set of randomly-picked items from the dataset.
 
         Parameters
         --------
@@ -856,6 +824,8 @@ class PWDistArrayStack(np.ndarray):
             random seed for reproducibility
         path_to_save : str
             where to save the plot, if unspecified, returns only the Figure
+        cbar_label : str, default=None
+            If string is passed, string. If None, will be empty
 
         Returns
         --------
@@ -865,6 +835,8 @@ class PWDistArrayStack(np.ndarray):
         assert isinstance(num_items, int)
         assert isinstance(path_to_save, str)
         assert form in ["triangle", "square"]
+        if cbar_label is None:
+            cbar_label = ""
 
         wflag = self._set_figsave_flag(path_to_save)
 
@@ -876,8 +848,8 @@ class PWDistArrayStack(np.ndarray):
         fig = map_form_fn[form](items=self[idxs, ...],
                                 titles=[f"Index  {i:,}" for i in idxs],
                                 cmap=cmap,
-                                cbar_label="distance",
-                                include_cbar=include_cbar)
+                                include_cbar=include_cbar,
+                                cbar_label="",)
         
         if wflag:
             fig.savefig(path_to_save, bbox_inches="tight")
@@ -885,102 +857,93 @@ class PWDistArrayStack(np.ndarray):
         return fig
 
 
-    def plot_proximity_avg(self, threshold: Number, hardness: Number = 1, keep_NaNs: bool = False,
-                           path_to_save: str = "", form: str = "triangle", cmap: str = "Reds"):
-        """
-        Plot the ensemble-averaged proximity matrix based on a distance threshold.
 
-        Proximity values are computed using a sigmoidal transformation or hard thresholding, then averaged
-        across all items in the stack.
+class PWDistArrayStack(_PWArrayStack):
+    """
+    A stack of pairwise distance vectors (1D) with utilities for matrix operations and visualization.
+    
+    Used to represent and process collections of intra-trace pairwise distances in chromatin tracing or
+    polymer modeling.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        A 1D or 2D array where each vector represents the pairwise distances (flattened) of a trace.
+        Must correspond to the binomial coefficient (n choose 2) for some integer n ≥ 2.
+
+    Attributes
+    ----------
+    num_items : int
+        Number of traces (1 if input was 1D).
+    num_bc : int
+        Number of barcodes (points) per trace, inferred from vector length.
+
+    Methods
+    -------
+    ensemble(method='mean', regularize=False)
+        Perform ensemble operation across the stack (mean, median, etc.).
+    proximity(threshold, hardness=1, keep_NaNs=False)
+        Compute proximity from distances using a threshold and hardness.
+    filter(min_efficiency=0.1)
+        Filter items based on missing data.
+    efficiency(by='pixel')
+        Compute detection efficiency by pixel or by item.
+    plot_ensemble_avg(path_to_save, method='mean', form='triangle', cmap='Reds_r')
+        Plot ensemble-average pairwise distance matrix.
+    plot_proximity_avg(path_to_save, threshold, hardness=1, form='triangle', cmap='Reds')
+        Plot ensemble-average proximity matrix.
+    """
+
+    # Initializing using __new__ instead of __init__ in line with Numpy
+    def __new__(cls, arr:np.ndarray):
+        """Create a new instance from a pairwise-distance vector stack."""
+        assert isinstance(arr, np.ndarray)
+        assert arr.ndim == 1 or 2
+    
+        if arr.ndim == 1:
+            arr = arr[np.newaxis, :]
+        s = arr.shape
+        d = int(np.ceil(np.sqrt(s[-1] * 2)))
+        if d * (d - 1) != s[-1] * 2:
+            raise ValueError("Incompatible vector size. Must be a binomial coefficient" \
+            "n choose 2 for some integer n >= 2.")
+        
+        obj = np.asarray(arr).view(cls)
+
+        # add new attributes to the created instance
+        obj.num_items = arr.shape[0]
+        obj.num_bc = d
+
+        return obj
+    
+
+    def __str__(self):
+        return f"PWArrayStack\n# items: {self.num_items}\n# barcodes: {self.num_bc}"
+
+
+    # Since new attributes were added in __new__
+    def __array_finalize__(self, obj):
+        # reset the attribute from passed original object
+        self.num_items = getattr(obj, "num_items", None)
+        self.num_bc = getattr(obj, "num_bc", None)
+
+
+    # NOTE JB's original function was different: data = 1 / (1 + (data / contact_threshold)**10)
+    def compute_proximity(self, threshold:Number, hardness=1, keep_NaNs=False) -> np.ndarray:
+        """
+        Convert distances into proximity values using a sigmoid function or hard threshold.
+
+        Hardness describes the sigmoid slope: ``0 < hardness <= 1``. ``hardness=1`` gives a hard cutoff.
+        Ideal value for softness visually appears to be 0.4. Values up to 0.2 may be too soft.
 
         Parameters
         ----------
-        path_to_save : str
-            Path (with file extension) where the figure will be saved.
         threshold : float
-            Distance threshold used to compute proximity.
-        hardness : float, default=1
-            Controls the slope of the sigmoid used for soft thresholding. 1 = hard threshold.
-        form : str, default="triangle"
-            Format of the plot: "triangle" for triangular heatmap, or "square" for full matrix heatmap.
-        cmap : str, default="Reds"
-            Matplotlib colormap to use for the plot.
-
-        Returns
-        -------
-        None
-            Saves the plot to the specified file path.
-
-        Examples
-        --------
-        >>> stack.plot_proximity_avg("figs/avg_proximity.svg", threshold=0.4, hardness=0.5, form="triangle", cmap="coolwarm")
-        """
-        
-        assert isinstance(path_to_save, str)
-        assert form in ["triangle", "square"]
-
-        wflag = self._set_figsave_flag(path_to_save)
-
-        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
-
-        prox_stack = self.proximity(threshold=threshold, hardness=hardness, keep_NaNs=keep_NaNs)
-        prox_mean = np.nanmean(prox_stack, axis=0)
-        fig = map_form_fn[form](items=[prox_mean],
-                                titles=[f"$n = ${self.num_items:,}  |  $k = ${threshold} nm |  $h = ${hardness:.1f}"],
-                                cmap=cmap,
-                                cbar_label="mean proximity")
-
-        if wflag:
-            fig.savefig(path_to_save, bbox_inches="tight")
-            plt.close(fig)
-        return fig
-    
-    
-    def plot_proximity_avg_comparisons(self, thresholds:Iterable, hardnesses:Iterable,
-                                        path_to_save: str = "", form: str = "triangle", cmap="Reds"):
-        """
-        Plot comparisons of proximity average maps computed using different parameters for threshold and hardness.
-        """
-
-        assert isinstance(thresholds, Iterable)
-        assert isinstance(hardnesses, Iterable)
-        assert len(thresholds) == len(hardnesses)
-        assert isinstance(path_to_save, str)
-        assert form in ["triangle", "square"]
-
-        wflag = self._set_figsave_flag(path_to_save)
-
-        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
-
-        prox_avgs = [np.mean(self.proximity(threshold=thr, hardness=hrd),axis=0) \
-                     for thr, hrd in zip(thresholds, hardnesses)]
-        
-        fig = map_form_fn[form](items=prox_avgs,
-                                titles=[f"$n = ${self.num_items:,}  |  $k = ${thr}  |  $h = ${hrd:.1f}" \
-                                        for thr, hrd in zip(thresholds, hardnesses)],
-                                cmap=cmap,
-                                cbar_label="mean proximity")
-        
-        if wflag:
-            fig.savefig(path_to_save, bbox_inches="tight")
-            plt.close(fig)
-        return fig
-    
-
-    def plot_proximity_random_examples(self, threshold: Number, hardness: Number,
-                                       num_items: int = 9, random_seed: int = None,
-                                       path_to_save: str = "", form: str = "triangle", cmap="Reds", include_cbar=True):
-        """
-        Plot a set of randomly-picked proximity maps from the dataset.
-
-        Parameters
-        --------
-        num_items : Number
-            number of items to plot
-        random_seed : int or None
-            random seed for reproducibility
-        path_to_save : str
-            where to save the plot, if unspecified, returns only the Figure
+            Distance cutoff.
+        hardness : float
+            Controls sigmoid slope. 1 is hard threshold; lower is softer.
+        keep_NaNs : bool
+            Whether to retain NaNs.
 
         Returns
         --------
@@ -999,7 +962,7 @@ class PWDistArrayStack(np.ndarray):
         idxs = random_gen.integers(self.num_items, size=num_items)
         
         fig = map_form_fn[form](items=self.proximity(threshold, hardness)[idxs, ...],
-                                titles=[f"Idx {i:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}" for i in idxs],
+                                titles=[f"Index  {i:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}" for i in idxs],
                                 cmap=cmap,
                                 cbar_label="proximity",
                                 include_cbar=include_cbar)
@@ -1048,7 +1011,7 @@ class PWDistArrayStack(np.ndarray):
 
         proportion_means = np.empty(len(thresholds))
         for i, thr in enumerate(thresholds):
-            stack = self.proximity(threshold=thr, hardness=hardness, keep_NaNs=False)
+            stack = self.compute_proximity(threshold=thr, hardness=hardness, keep_NaNs=False)
             if hardness != 1:
                 stack = np.where(stack >= 0.75, 1, 0)
             proportion_means[i] = np.mean(stack)
@@ -1062,31 +1025,100 @@ class PWDistArrayStack(np.ndarray):
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
         return fig
+    
+
+    def plot_proximity_avg_comparisons(self, thresholds: Iterable, hardnesses: Iterable,
+                                        path_to_save: str = "", form: str = "triangle", cmap="Reds"):
+        """
+        Compare ensemble-average proximity maps across parameter settings.
+
+        This is a convenience wrapper around
+        :meth:`topic3d.datatypes.PWDistArrayStack.proximity` followed by averaging
+        across items.
+
+        Parameters
+        ----------
+        thresholds : Iterable[float]
+            Distance thresholds ``k`` used to convert pairwise distances to proximities.
+        hardnesses : Iterable[float]
+            Hardness values ``h`` (``0 < h <= 1``) controlling the steepness of the
+            distance-to-proximity sigmoid (``h=1`` is a hard cutoff).
+        path_to_save : str, optional
+            If provided, save the figure to this path.
+        form : {{"triangle", "square"}}, default="triangle"
+            Whether to plot the lower triangle or the full square matrix.
+        cmap : str, default="Reds"
+            Matplotlib colormap.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The generated figure.
+        """
+
+        assert isinstance(thresholds, Iterable)
+        assert isinstance(hardnesses, Iterable)
+        assert len(thresholds) == len(hardnesses)
+        assert isinstance(path_to_save, str)
+        assert form in ["triangle", "square"]
+
+        wflag = self._set_figsave_flag(path_to_save)
+
+        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
+
+        prox_avgs = [np.mean(self.compute_proximity(threshold=thr, hardness=hrd),axis=0) \
+                     for thr, hrd in zip(thresholds, hardnesses)]
+        
+        fig = map_form_fn[form](items=prox_avgs,
+                                titles=[f"$n = ${self.num_items:,}  |  $k = ${thr}  |  $h = ${hrd:.1f}" \
+                                        for thr, hrd in zip(thresholds, hardnesses)],
+                                cmap=cmap,
+                                cbar_label="mean proximity")
+        
+        if wflag:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
 
 
-    # TODO complete after normalization procedure is implemented
-    # def plot_proximity_stats(self, threshold: Number):
-    #     """
-    #     Plot the contact histogram
-    #     @param pwd_raw: (numpy array) contains all the raw pairwise distance maps flatten as 1D vector
-    #     @param pwd_normalized: (numpy array) contains all the raw pairwise distance maps flatten as 1D vector
-    #     @param thresh: (int) threshold for the contact in nm
-    #     @param saving_folder: (str) folder where to save the plot
-    #     @return:
-    #     """
 
-    #     raw_contacts = np.where(np.isnan(pwd_raw), np.nan, pwd_raw < thresh)
-    #     raw_contacts = np.nansum(raw_contacts, axis=1)
-    #     normalized_contacts = np.where(np.isnan(pwd_normalized), np.nan, pwd_normalized < thresh)
-    #     normalized_contacts = np.nansum(normalized_contacts, axis=1)
+class PWProxArrayStack(_PWArrayStack):
+    """
+    Stack of flattened pairwise *proximity* vectors.
 
-    #     plt.figure(figsize=(8, 6))
-    #     sns.histplot(raw_contacts, bins=50, kde=True, alpha=0.5)
-    #     sns.histplot(normalized_contacts, bins=50, kde=True, alpha=0.5)
-    #     plt.xlabel("Contact Values")
-    #     plt.ylabel("Frequency")
-    #     plt.title("Histogram of Contacts")
-    #     plt.legend(["raw", "normalized"])
-    #     plt.savefig(path.join(saving_folder, f'contact_stat_thresh_{int(thresh)}nm.png'), dpi=150
-    #                 , bbox_inches='tight')
-    #     plt.close()
+    This container is analogous to :class:`~topic3d.datatypes.PWDistArrayStack`,
+    but stores proximity values (typically in ``[0, 1]``) instead of distances.
+    """
+
+    # Initializing using __new__ instead of __init__ in line with Numpy
+    def __new__(cls, arr:np.ndarray):
+        """Create a new instance from a pairwise-distance vector stack."""
+        assert isinstance(arr, np.ndarray)
+        assert arr.ndim == 1 or 2
+    
+        if arr.ndim == 1:
+            arr = arr[np.newaxis, :]
+        s = arr.shape
+        d = int(np.ceil(np.sqrt(s[-1] * 2)))
+        if d * (d - 1) != s[-1] * 2:
+            raise ValueError("Incompatible vector size. Must be a binomial coefficient" \
+            "n choose 2 for some integer n >= 2.")
+        
+        obj = np.asarray(arr).view(cls)
+
+        # add new attributes to the created instance
+        obj.num_items = arr.shape[0]
+        obj.num_bc = d
+
+        return obj
+    
+
+    def __str__(self):
+        return f"PWArrayStack\n# items: {self.num_items}\n# barcodes: {self.num_bc}"
+
+
+    # Since new attributes were added in __new__
+    def __array_finalize__(self, obj):
+        # reset the attribute from passed original object
+        self.num_items = getattr(obj, "num_items", None)
+        self.num_bc = getattr(obj, "num_bc", None)
