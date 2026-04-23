@@ -109,16 +109,6 @@ embedding_df = res.embed_decomposition(
 ┃ ┃ ┣ 📜run_dask.py
 ┃ ┃ ┗ 📜run.py
 ┃ ┣ 📂topic3d
-┃ ┃ ┣ 📂__pycache__
-┃ ┃ ┃ ┣ 📜__init__.cpython-313.pyc
-┃ ┃ ┃ ┣ 📜_helper.cpython-313.pyc
-┃ ┃ ┃ ┣ 📜datamgrs.cpython-313.pyc
-┃ ┃ ┃ ┣ 📜datatypes.cpython-313.pyc
-┃ ┃ ┃ ┣ 📜handlers.cpython-313.pyc
-┃ ┃ ┃ ┣ 📜helper.cpython-313.pyc
-┃ ┃ ┃ ┣ 📜postprocess.cpython-313.pyc
-┃ ┃ ┃ ┣ 📜postprocessing.cpython-313.pyc
-┃ ┃ ┃ ┗ 📜visualization.cpython-313.pyc
 ┃ ┃ ┣ 📂workflow
 ┃ ┃ ┃ ┣ 📜_dataops.py
 ┃ ┃ ┃ ┣ 📜_logging.py

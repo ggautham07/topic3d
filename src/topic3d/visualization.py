@@ -309,16 +309,15 @@ def _annotate_labels(ax, tick_dict, loc_dict, lib, fontsize=12, line_sep=0.04):
 
         # Draw the label manually
         if label_color == 'black':
-            if i % 5 == 0:
-                ax.text(
-                    x=tick, y=-0.01, s=bc,
-                    transform=ax.get_xaxis_transform(),
-                    rotation=0,
-                    ha='center', va='top',
-                    fontsize=fontsize,
-                    fontweight='bold',
-                    color=label_color  # ✅ this sets the correct color
-                    )
+            ax.text(
+                x=tick, y=-0.01, s=bc,
+                transform=ax.get_xaxis_transform(),
+                rotation=0,
+                ha='center', va='top',
+                fontsize=fontsize,
+                fontweight='bold',
+                color=label_color  # ✅ this sets the correct color
+                )
         else:
             ax.text(
                 x=tick, y=-0.01, s=bc,
@@ -579,7 +578,7 @@ def _draw_2d_sq_map(matrix: np.ndarray, ax: Axes, cmap: str = "Reds", gridlines:
 
 # TODO include plots for a common colorbar case
 def plot_matrices_square(items: Iterable, titles: Iterable[str] = None,
-                         cmap="Reds", cbar_label=""):
+                         cmap="Reds", include_cbar=True, cbar_label=""):
     """
     Plot a tightly-spaced grid of matrices with or without a common colorbar in a square form.
 
@@ -606,8 +605,8 @@ def plot_matrices_square(items: Iterable, titles: Iterable[str] = None,
 
     num_rows, num_cols = _get_grid_num_rows_cols(len(items))
     fig, axs = plt.subplots(nrows=num_rows, ncols=num_cols,
-                            figsize=(num_cols*5, num_rows*4),
-                            layout="none",
+                            figsize=(num_cols*5.5 if include_cbar else num_cols*4.5, num_rows*5),
+                            layout="none" if include_cbar else "tight",
                             dpi=300)
     # if common_cbar:
         # fig.subplots_adjust(bottom=0.8)
@@ -615,6 +614,7 @@ def plot_matrices_square(items: Iterable, titles: Iterable[str] = None,
 
     for ax, itm, ttl in zip(axs.flat if num_rows * num_cols > 1 else [axs], items, titles):
         
+        itm = np.asarray(itm, dtype=float)
         if itm.ndim == 1:
             mat = squareform(itm)
             np.fill_diagonal(mat, np.nan)
@@ -636,14 +636,15 @@ def plot_matrices_square(items: Iterable, titles: Iterable[str] = None,
         ax.set_xticklabels(ticks_bc, fontsize=8 if flag_no_grid else 9, fontweight="bold", color="black")
         ax.set_yticklabels(ticks_bc, fontsize=8 if flag_no_grid else 9, fontweight="bold", color="black")
 
-        cbar = fig.colorbar(mappable=im, ax=ax, pad=0.175 if flag_no_grid else 0.225, shrink=0.5, aspect=15)
-        cbar.set_ticks(ticks=[min_val, mid_val, max_val],
-                       labels=[f"{min_val:.1f}", f"{mid_val:.1f}", f"{max_val:.1f}"],
-                       fontsize=9 if flag_no_grid else 11)
-        cbar.ax.set_ylabel(cbar_label, fontsize=11 if flag_no_grid else 12, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
-        cbar.outline.set_visible(False)
-        cbar.ax.yaxis.set_label_position("right")
-        cbar.ax.yaxis.set_ticks_position("left")
+        if include_cbar:
+            cbar = fig.colorbar(mappable=im, ax=ax, pad=0.175 if flag_no_grid else 0.225, shrink=0.5, aspect=15)
+            cbar.set_ticks(ticks=[min_val, mid_val, max_val],
+                        labels=[f"{min_val:.1f}", f"{mid_val:.1f}", f"{max_val:.1f}"],
+                        fontsize=9 if flag_no_grid else 11)
+            cbar.ax.set_ylabel(cbar_label, fontsize=11 if flag_no_grid else 12, labelpad=5)    # "Pseudocount", fontsize=font_info["tick_label"]
+            cbar.outline.set_visible(False)
+            cbar.ax.yaxis.set_label_position("right")
+            cbar.ax.yaxis.set_ticks_position("left")
         
         # Setting the title/text for the map
         ax.set_title(ttl, fontsize=10 if flag_no_grid else 13, loc="center", y=1.025)
@@ -723,6 +724,82 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
 
     ax.text(0.5, 0.55,
             f"CFM {topic_n} – representativity: {round(topic_repr*100, 1)}%",
+            transform=ax.transAxes,
+            ha="center", va="bottom",
+            fontsize=font_info["title"], fontweight="bold")
+
+    # save & close
+    plt.savefig(figname, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_pyramid_topic2(topic_n: int, topic: np.ndarray, topic_repr: dict,
+                        lib, locus_dict: Dict,
+                        figname: str,
+                        font_info: Dict[str, int],
+                        line_sep: float,
+                        cmap: str = "Reds",
+                        bright_q: float = BRIGHT_Q) -> None:
+    """Plot a single topic with annotation **and** edge‑type enrichment.
+
+    Besides the behaviour of the original implementation this version:
+      • computes per‑matrix odds ratios using ``odds_ratio_matrix``;
+      • prints every edge type with OR > 1 (sorted descending) onto the
+        triangle, one per line, small font.
+    """
+    # ------------------------------------------------------------------
+    #  Prepare data
+    # ------------------------------------------------------------------
+    topic_sq = squareform(topic) if topic.ndim == 1 else topic
+
+    or_dict = _odds_ratio_matrix(topic_sq, locus_dict, bright_q)
+    # print(or_dict)
+    enrich  = [(et, OR) for et, (OR, _) in or_dict.items() if OR > 1]
+    enrich.sort(key=lambda x: x[1], reverse=True)
+    # print(enrich)
+
+    # ------------------------------------------------------------------
+    #  Base triangular heat‑map (unchanged from original)
+    # ------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(10, 10))
+    im = _draw_2d_tri_map(topic_sq, ax=ax, cmap=cmap)
+    num_bins = len(lib["barcode_id"])
+    yf = -0.01 * num_bins
+    ax.set_ylim(yf, num_bins)
+
+    tick_dict = hp.parse_locus_labels(locus_dict, lib)
+    ax = _annotate_labels(ax, tick_dict, locus_dict, lib,
+                         fontsize=font_info["tick_label"],
+                         line_sep=line_sep)
+    _add_gene_legend(ax, locus_dict,
+                    location="outside", anchor=(0, 0.5),
+                    fontsize=font_info["legend"])
+
+    # ------------------------------------------------------------------
+    #  Overlay ORs  -----------------------------------------------------
+    # ------------------------------------------------------------------
+    if enrich:
+        txt_lines = [f"{et}: {OR:.{OR_DIGITS}f}" for et, OR in enrich]
+        ax.text(0.01, 0.3, "\n".join(txt_lines),
+                transform=ax.transAxes,
+                ha="left", va="top", fontsize=font_info["tick_label"],   # - 3 (before)
+                bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="black", lw=0.7))
+
+    # ------------------------------------------------------------------
+    #  Colour‑bar and title (original style) ----------------------------
+    # ------------------------------------------------------------------
+    axpos = ax.get_position()
+    cax = fig.add_axes([axpos.x1 + 0.01, axpos.y0, 0.03, axpos.height / 2])
+    cbar = plt.colorbar(im, cax=cax)
+    cbar.ax.set_ylabel("Pseudocount", fontsize=font_info["tick_label"])
+    cbar.ax.tick_params(labelsize=font_info["tick_label"] + 2)
+
+    topic_repr_neat = f"CFM {topic_n}\n"
+    for key in topic_repr.keys():
+        topic_repr_neat = topic_repr_neat + f"{key}: {round(topic_repr[key]*100, 1)}%  "
+
+    ax.text(0.5, 0.55,
+            topic_repr_neat,
             transform=ax.transAxes,
             ha="center", va="bottom",
             fontsize=font_info["title"], fontweight="bold")
