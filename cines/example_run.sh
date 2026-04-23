@@ -21,7 +21,7 @@ export MPLBACKEND=agg
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-cmd=$HOMEDIR"/.local/bin/topic3d-run"
+cmd="topic3d-run"
 data=$SCRATCHDIR"/topics/data/hung2024BoundaryStackingInteractions_Mm-Forelimb-Pitx1.h5"
 outdir=$SCRATCHDIR"/topics/training"
 
