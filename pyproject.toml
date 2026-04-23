@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topic3d"
-version = "0.0.0-dev.11"
+version = "0.0.0"
 description = "Topic decomposition of chromatin tracing data"
 authors = [
   {name = "Gautham Ganesh", email = "gautham.ganesh@cbs.cnrs.fr"},
@@ -14,6 +14,8 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
+    "h5py>=3.0.0",
+    "joblib",
     "numpy>=1.21",
     "scipy>=1.0.0",
     "pandas>=2.3.2",
