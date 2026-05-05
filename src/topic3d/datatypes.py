@@ -933,7 +933,7 @@ class PWDistArrayStack(_PWArrayStack):
         """
         Convert distances into proximity values using a sigmoid function or hard threshold.
 
-        Hardness describes the sigmoid slope: ``0 < hardness <= 1``. ``hardness=1`` gives a hard cutoff.
+        Hardness describes sigmoid slope, 0 < hardness <= 1, where 1 means hard.
         Ideal value for softness visually appears to be 0.4. Values up to 0.2 may be too soft.
 
         Parameters
@@ -946,31 +946,30 @@ class PWDistArrayStack(_PWArrayStack):
             Whether to retain NaNs.
 
         Returns
-        --------
-        Figure
+        -------
+        np.ndarray
+            Proximity values in [0, 1].
         """
 
-        assert isinstance(num_items, int)
-        assert isinstance(path_to_save, str)
-        assert form in ["triangle", "square"]
+        assert isinstance(threshold, Number)
+        assert not ((self == 0) | (self == 1)).all()
+        assert threshold <= np.nanmax(self)
+        assert isinstance(hardness, Number) and 0 < hardness <= 1
 
-        wflag = self._set_figsave_flag(path_to_save)
-
-        map_form_fn = {"triangle": vzl.plot_matrices_triangle, "square": vzl.plot_matrices_square,}
-
-        random_gen = np.random.default_rng(seed=random_seed)
-        idxs = random_gen.integers(self.num_items, size=num_items)
+        if hardness < 0.2:
+            warnings.warn(f"Input hardness value of {hardness} may be too soft")
         
-        fig = map_form_fn[form](items=self.proximity(threshold, hardness)[idxs, ...],
-                                titles=[f"Index  {i:,}  |  $k = ${threshold} nm  |  $h = ${hardness:.1f}" for i in idxs],
-                                cmap=cmap,
-                                cbar_label="proximity",
-                                include_cbar=include_cbar)
-        
-        if wflag:
-            fig.savefig(path_to_save, bbox_inches="tight")
-            plt.close(fig)
-        return fig
+        mode = "hard" if hardness == 1 else "soft"
+
+        if mode == "hard":
+            if keep_NaNs:
+                return np.where(np.isnan(self), np.nan, self <= threshold)
+            return (self <= threshold).astype(int)
+
+        out = 1 / (1 + np.exp(hardness * (self - threshold)))
+        if keep_NaNs:
+            return out
+        return np.nan_to_num(out, nan=0, copy=True)
 
 
     def plot_mean_proximity_proportion(self, thresholds:list, hardness=1, path_to_save: str = ""):

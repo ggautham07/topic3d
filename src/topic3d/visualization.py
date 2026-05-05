@@ -524,7 +524,7 @@ def plot_matrices_triangle(items:Iterable, titles:Iterable[str] = None,
             im = _draw_2d_tri_map(mat, ax=ax, cmap=cmap, vmin=min_val, vmax=max_val)    # using internal routine
         else:
             im = _draw_2d_tri_map(mat, ax=ax, cmap=cmap,)
-        ticks_bc = np.arange(0, num_bc, 5)
+        ticks_bc = np.arange(0, num_bc, 2)
         ax.set_xticks(ticks_bc)
         for tk in ticks_bc:
             ax.text(x=tk, y=0.09, s="|",
