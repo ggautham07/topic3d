@@ -240,7 +240,7 @@ class Topic3DResult:
 
 
     @staticmethod
-    def _compute_coherence_npmi_cos(components, data_used, num_top_pixels=10, randomize_data=False):
+    def _compute_coherence_npmi_cos(CFM, data, num_top_pixels=None, randomize_data=False):
         """
         Compute both the NPMI and cosine coherence scores for each component.
 
@@ -266,48 +266,54 @@ class Topic3DResult:
         >>> _compute_coherence_npmi_cos(components, data_used)
         (array([...]), array([...]))
         """
-        
-        num_components = len(components)
-        coherence_npmi = np.zeros((num_components,))
-        coherence_cos = np.zeros((num_components,))
-        data_used = np.asarray(data_used)
-        data_used_probs = np.mean(data_used, axis=0)
+
+        data_ = np.asarray(data)
+        data_probs = np.mean(data_, axis=0)
+
+        assert (num_top_pixels is None) or isinstance(num_top_pixels, Number)
+        var_num_top_pixels = True if num_top_pixels is None else False
 
         EPS = 10**-5    # value of epsilon is kept constant
 
-        for k in range(num_components):
-            comp = components[k, :]
-            if randomize_data:
-                idx = np.random.permutation(comp.shape[0])
-            else:
-                idx = np.argsort(comp)[::-1]  # return the bin index in descending order
-            idxs_top = idx[:num_top_pixels]
+        if randomize_data:
+            idxs = np.random.permutation(CFM.shape[0])
+        else:
+            idxs = np.argsort(CFM)[::-1]  # return the bin index in descending order
+        if var_num_top_pixels:
+            num_top_pixels = np.sum(CFM > 1)
+            # print(f"selected {num_top_pixels}")
+        idxs_top = idxs[:num_top_pixels]
 
-            # Compute the NPMI for all pairs of selected bins
-            npmi = np.zeros((num_top_pixels, num_top_pixels))
-            for m in range(num_top_pixels):
-                for n in range(m+1, num_top_pixels):
-                    i, j = idxs_top[m], idxs_top[n]
-                    co_occurrence = np.mean((data_used[:, i] >= 0.75) & (data_used[:, j] >= 0.75))
-                    p_mn = co_occurrence
-                    p_nn = data_used_probs[idx[n]]
-                    p_mm = data_used_probs[idx[m]]
-                    if co_occurrence > 0:
-                        pmi = np.log2((p_mn + EPS) / (p_nn * p_mm))
-                        npmi[m, n] = - pmi / np.log2(p_mn + EPS)
-                        npmi[n, m] = npmi[m, n]
-            c_npmi = np.sum(npmi[np.triu_indices(num_top_pixels, k=1)])
+        # Compute the NPMI for all pairs of selected bins
+        npmi = np.zeros((num_top_pixels, num_top_pixels))
+        for m in range(num_top_pixels):
+            for n in range(m+1, num_top_pixels):
+                i, j = idxs_top[m], idxs_top[n]
+                co_occurrence = np.mean((data_[:, i] == 1) & (data_[:, j] == 1))
+                p_mn = co_occurrence
+                p_nn = data_probs[idxs[n]]
+                p_mm = data_probs[idxs[m]]
+                # print("p_mn", p_mn)
+                # print("p_nn", p_nn)
+                # print("p_mm", p_mm)
+                if co_occurrence > 0:
+                    pmi = np.log2((p_mn + EPS) / (p_nn * p_mm))
+                    print("PMI: ", pmi)
+                    npmi[m, n] = - pmi / np.log2(p_mn + EPS)
+                    npmi[n, m] = npmi[m, n]
+        c_npmi = np.sum(npmi[np.triu_indices(num_top_pixels, k=1)])
+        print("NPMI init norm: ", c_npmi)
 
-            # For each selected pixel, compute the norm of the NPMI computed for all the pixels (one vs all)
-            # Required for the calculation of the cosine similarity.
-            norm = np.linalg.norm(npmi, axis=1)
-            c_cos = 0
-            for m in range(0, num_top_pixels, 1):
-                for n in range(m + 1, num_top_pixels):
-                    c_cos += np.dot(npmi[m, :], npmi[n, :]) / (norm[m] * norm[n])
+        # For each selected pixel, compute the norm of the NPMI computed for all the pixels (one vs all)
+        # Required for the calculation of the cosine similarity.
+        norm = np.linalg.norm(npmi, axis=1)
+        c_cos = 0
+        for m in range(0, num_top_pixels, 1):
+            for n in range(m + 1, num_top_pixels):
+                c_cos += np.dot(npmi[m, :], npmi[n, :]) / (norm[m] * norm[n])
 
-            coherence_cos[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_cos
-            coherence_npmi[k] = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_npmi
+        coherence_cos = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_cos
+        coherence_npmi = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_npmi
 
         return coherence_npmi, coherence_cos
 
@@ -383,8 +389,8 @@ class Topic3DResult:
 
         out = []
         if method in ["npmi", "cos", "all"]:
-            out.append(self._compute_coherence_npmi_cos(components=self.CFMs,
-                                                        data_used=data,
+            out.append(self._compute_coherence_npmi_cos(CFM=self.CFMs,
+                                                        data_=data,
                                                         num_top_pixels=num_top_pixels,
                                                         randomize_data=False))
         if method in ["umass", "all"]:
@@ -808,8 +814,8 @@ class Topic3DModelPool():
             assert isinstance(data_used, np.ndarray) and data_used.ndim in [2, 3]
 
         if by == "coherence":
-            scores = np.asarray([np.mean(Topic3DResult._compute_coherence_npmi_cos(components=model.components_,
-                                                                                   data_used=data_used)[0]) \
+            scores = np.asarray([np.mean(Topic3DResult._compute_coherence_npmi_cos(CFM=model.components_,
+                                                                                   data_=data_used)[0]) \
                                                                                     for model in self.models])
         elif by == "perplexity":
             scores = np.asarray([self._get_model_perplexity(model) for model in self.models])
@@ -840,9 +846,11 @@ class Topic3DModelPool():
         for n in num_CFMs_unique:
             idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
             if by == "coherence":
-                scores.append(np.mean([Topic3DResult._compute_coherence_npmi_cos(components=self.models[i].components_,
-                                                                                 data_used=data_used)[0] \
-                                                                                    for i in idxs_reqd]))
+                coherence_calc = []
+                for i in idxs_reqd:
+                    coherence_calc.append([Topic3DResult._compute_coherence_npmi_cos(CFM=comp, data=data_used)[0] \
+                                           for comp in self.models[i].components_])
+                scores.append(np.mean(coherence_calc))
             elif by == "perplexity":
                 scores.append(np.mean([self._get_model_perplexity(self.models[i]) for i in idxs_reqd]))
 
@@ -885,7 +893,7 @@ class Topic3DModelPool():
         return fig
 
 
-    def plot_mean_coherence_vs_num_CFMs(self, data: np.ndarray, method: str = "npmi", path_to_save: str = ""):
+    def plot_mean_coherence_vs_num_CFMs_legacy(self, data_used: np.ndarray, method: str = "npmi", path_to_save: str = ""):
         
         num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
 
@@ -896,9 +904,9 @@ class Topic3DModelPool():
 
             coherence_all = []
             for CFMs in self.CFMs_by_model:
-                c, _ = Topic3DResult._compute_coherence_npmi_cos(components=CFMs,
-                                                                data_used=data,
-                                                                num_top_pixels=n_px)
+                c, _ = Topic3DResult._compute_coherence_npmi_cos(CFM=CFMs,
+                                                                 data_=data_used,
+                                                                 num_top_pixels=n_px)
                 coherence_all.append(c)
             coherences_means = []
             coherences_stds = []
@@ -924,6 +932,71 @@ class Topic3DModelPool():
             fig.savefig(path_to_save, bbox_inches="tight")
             plt.close(fig)
         return fig
+    
+
+    def plot_mean_coherence_vs_num_CFMs(self, data_used: np.ndarray, method: str = "npmi", path_to_save: str = ""):
+        
+        num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
+
+        fig, ax = plt.subplots()
+        coherence_all_rep = []
+        coherence_all_norep = []
+        for model, CFMs in zip(self.models, self.CFMs_by_model):
+            decomp = model.transform(data_used)
+            decomp_bin = decomp >= (1 / model.n_components + 0.1)
+            coherence_by_CFM_rep = []
+            coherence_by_CFM_norep = []
+            for i in range(len(CFMs)):
+                data_rep = data_used[decomp_bin[:,i] == 1]
+                data_norep = data_used[decomp_bin[:,i] == 0]
+                c_rep, _ = Topic3DResult._compute_coherence_npmi_cos(CFM=CFMs[i],
+                                                                     data=data_rep,)
+                c_norep, _ = Topic3DResult._compute_coherence_npmi_cos(CFM=CFMs[i],
+                                                                       data=data_norep,)
+                coherence_by_CFM_rep.append(c_rep)
+                coherence_by_CFM_norep.append(c_norep)
+            coherence_all_rep.append(coherence_by_CFM_rep)
+            coherence_all_norep.append(coherence_by_CFM_norep)
+        coherences_rep_means = []
+        coherences_rep_stds = []
+        coherences_norep_means = []
+        coherences_norep_stds = []        
+        for n in num_CFMs_by_model_unique:
+            idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
+            cohrs_rep = []
+            cohrs_norep = []
+            for i in idxs_reqd:
+                cohrs_rep.extend(coherence_all_rep[i])
+                cohrs_norep.extend(coherence_all_norep[i])
+            coherences_rep_means.append(np.mean(cohrs_rep))
+            coherences_rep_stds.append(np.std(cohrs_rep))
+            coherences_norep_means.append(np.mean(cohrs_norep))
+            coherences_norep_stds.append(np.std(cohrs_norep))
+
+        ax.errorbar(x=num_CFMs_by_model_unique,
+                    y=coherences_rep_means,
+                    yerr=coherences_rep_stds,
+                    fmt="s-",
+                    color="C0",
+                    capsize=2.5,
+                    label="representative")
+        ax.errorbar(x=num_CFMs_by_model_unique,
+                    y=coherences_norep_means,
+                    yerr=coherences_norep_stds,
+                    fmt="o-",
+                    color="C7",
+                    capsize=2.5,
+                    label="non-representative")
+        
+        ax.set_xlabel("# CFMs")
+        ax.set_ylabel("mean NPMI coherence")
+        plt.legend()
+        
+        if isinstance(path_to_save, str) and len(path_to_save) > 0:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
+
 
 
     @staticmethod
