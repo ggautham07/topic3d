@@ -55,7 +55,7 @@ def load_data_file(path_to_file,
         logger.info(f"[{uid}] Unrecognized file extension/type")
         raise ValueError
     
-    if log_exists:
+    if not log_exists:
         kill_logger(logger)
 
     return data
@@ -107,7 +107,7 @@ def _check_proximity_array(data, uid=None, logger=None):
             data_.append(squareform(data[i]))
         data_ = np.asarray(data_)
 
-        if log_exists:
+        if not log_exists:
             kill_logger(logger)
         
     return data_
@@ -207,7 +207,7 @@ def split_proximity_data(data: np.ndarray, train_data_proportion: Number = 1, **
         data_test = data[idxs_test]
         logger.info(f"[{uid}] Training data shape: {data_train.shape}, testing data shape: {data_test.shape}")
 
-    if log_exists:
+    if not log_exists:
         kill_logger(logger)
     
     return data_train, data_test
