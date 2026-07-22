@@ -723,7 +723,7 @@ def plot_pyramid_topic(topic_n: int, topic: np.ndarray, topic_repr: float,
     cbar.ax.tick_params(labelsize=font_info["tick_label"] + 2)
 
     ax.text(0.5, 0.55,
-            f"CFM {topic_n} – representativity: {round(topic_repr*100, 1)}%",
+            f"CFM {topic_n} – representativity: {topic_repr}%",
             transform=ax.transAxes,
             ha="center", va="bottom",
             fontsize=font_info["title"], fontweight="bold")
