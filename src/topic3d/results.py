@@ -98,7 +98,7 @@ class Topic3DResult:
         """
         
         with h5py.File(path.join(dir_to_save, "results.h5"), mode="w") as handler:
-            handler.create_dataset(name="components", data=self.CFMs)
+            handler.create_dataset(name="CFMs", data=self.CFMs)
             handler.create_dataset(name="decomposition", data=self.decomposition)
             for k, v in self.metadata.items():
                 try:
@@ -142,13 +142,22 @@ class Topic3DResult:
         if normalize:
             return self.decomposition @ self.CFMs_norm
         return self.decomposition @ self.CFMs
-    
+  
 
-    # TODO multiple methods
     @staticmethod
-    def _extract_representativity_threshold(decomposition, method=None):
-        if method is None:
-            return (1 / decomposition.shape[-1]) + 0.1
+    def _extract_representativity_threshold(decomposition, method="gt", value=None):
+
+        assert method in ["gt", "x"]
+
+        default_value = {"gt": 0.1, "x": 2}
+        if value is None:
+            value = default_value[method]
+
+        prob = 1 / decomposition.shape[-1]
+
+        if method == "gt":
+            return prob + value
+        return prob * value
 
 
     def compute_CFM_representativity(self, weight_threshold: float = None) -> np.ndarray:
@@ -281,9 +290,7 @@ class Topic3DResult:
             idxs = np.argsort(CFM)[::-1]  # return the bin index in descending order
         if var_num_top_pixels:
             num_top_pixels = np.sum(CFM > 1, dtype=int)
-            # print(f"selected {num_top_pixels}")
         idxs_top = idxs[:num_top_pixels]
-        # print(idxs_top)
 
         # Compute the NPMI for all pairs of selected bins
         npmi = np.zeros((num_top_pixels, num_top_pixels))
@@ -294,16 +301,11 @@ class Topic3DResult:
                 p_mn = co_occurrence
                 p_nn = data_probs[idxs_top[n]]
                 p_mm = data_probs[idxs_top[m]]
-                # print("p_mn", p_mn)
-                # print("p_nn", p_nn)
-                # print("p_mm", p_mm)
                 if co_occurrence > 0:
                     pmi = np.log2((p_mn + EPS) / (p_nn * p_mm))
-                    # print("PMI: ", pmi)
                     npmi[m, n] = - pmi / np.log2(p_mn + EPS)
                     npmi[n, m] = npmi[m, n]
         c_npmi = np.sum(npmi[np.triu_indices(num_top_pixels, k=1)])
-        # print("NPMI init norm: ", c_npmi)
 
         # For each selected pixel, compute the norm of the NPMI computed for all the pixels (one vs all)
         # Required for the calculation of the cosine similarity.
@@ -587,6 +589,58 @@ class Topic3DResult:
         return fig
 
 
+    def plot_decomposition_mult(self,
+                                sources: np.ndarray,
+                                cmaps: dict = None,
+                                path_to_save: str = ""):
+        """
+        Plot an ordered decomposition matrix with multiple data sources.        
+        """
+
+        from itertools import chain
+        import seaborn as sns
+
+        wflag = self._set_figsave_flag(path_to_save)
+
+        reprez = self.compute_CFM_representativity(self.decomposition, weight_threshold=(1/self.num_CFMs)+0.1)
+        idxs_reprez_desc = np.argsort(reprez)[::-1]
+        decomposition_reorg = self.decomposition[:, idxs_reprez_desc]
+        idxs_maxval_by_trace = np.argmax(decomposition_reorg, axis=1)
+        decomposition_ord = np.empty((0, self.num_CFMs), dtype=decomposition_reorg.dtype)
+        sources_ord = np.empty(0, dtype=sources.dtype)
+        for i in range(len(idxs_reprez_desc)):
+            selection = decomposition_reorg[idxs_maxval_by_trace == i, :]
+            sources_filt = sources[idxs_maxval_by_trace == i]
+            for s in np.unique(sources):
+                idxs_ord = (np.argsort(selection[sources_filt == s, i])[::-1])
+                decomposition_ord = np.concatenate((decomposition_ord,
+                                                    selection[sources_filt == s][idxs_ord, :]), axis=0)
+                sources_ord = np.concatenate(sources_ord,
+                                             sources_filt[sources_filt == s][idxs_ord])
+
+        default_cmaps = ["Greys", "Purples", "Blues", "Greens", "Oranges", "Reds"]
+        if cmaps is None:
+            sources_unique = np.unique(sources)
+            cmaps = {src: cmap for src, cmap in zip(sources_unique, default_cmaps)}
+
+        fig = plt.figure(figsize=(6, 4))
+        fig.set_layout_engine("tight")
+        fig.set_dpi(600)
+        ax = sns.heatmap(decomposition_ord, cmap="Greys", vmin=0, vmax=1, cbar=False)
+        for src, cmap in cmaps.items():
+            mask = np.zeros_like(decomposition_ord, dtype=bool)
+            mask[~(sources_ord == src)] = True
+            sns.heatmap(decomposition_ord, mask=mask, cmap=cmap, vmin=0, vmax=1, ax=ax, cbar=True)
+        ax.set_xticks(ticks=np.arange(idxs_reprez_desc.shape[0])+0.5, labels=idxs_reprez_desc, fontsize=6);
+        ax.get_yaxis().set_visible(False)
+
+        if wflag:
+            fig.savefig(path_to_save,
+                        bbox_inches="tight")
+            plt.close(fig)
+        return fig
+
+
     def embed_decomposition(self,
                             dir_to_save: str,
                             method: str = "UMAP",
@@ -837,6 +891,24 @@ class Topic3DModelPool():
             return self.rank_models(by=by, data_used=data_used)[0]
         elif by == "perplexity":
             return self.rank_models(by=by)[0]
+
+
+    def compute_coherence_vs_num_CFMs(self, data_used: np.ndarray = None):
+        """
+        Get coherence as a function of number of CFMs
+        """
+        
+        num_CFMs_unique = np.unique(self.num_CFMs_by_model)
+        coherence_scores = []
+        for n in num_CFMs_unique:
+            idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
+            calc = []
+            for i in idxs_reqd:
+                calc.append([Topic3DResult._compute_coherence_npmi_cos(CFM=comp, data=data_used)[0] \
+                                        for comp in self.models[i].components_])
+            coherence_scores.append(np.asarray(calc))
+
+        return coherence_scores
     
 
     def rank_num_CFMs(self, by="coherence", data_used: np.ndarray = None):

@@ -266,7 +266,34 @@ def train_LDA_model(model: LatentDirichletAllocation,
         return model, perplexity_over_training
     else:
         return model
-    
+
+
+def save_learning_evaluation(perplexity_by_iter: dict,
+                             path_to_save: str,
+                             uid: str = None,
+                             logger: logging.Logger = None):
+
+    assert isinstance(perplexity_by_iter, dict)
+    assert isinstance(path_to_save, str)
+
+    if uid is None:
+        uid = "no-uid"
+    else:
+        assert isinstance(uid, str)
+
+    log_exists = False
+    if logger is None:
+        logger = setup_log_nosave(name="topic3d")
+    else:
+        assert isinstance(logger, logging.Logger)
+        log_exists = True
+
+    json.dump(obj=perplexity_by_iter, fp=open(path_to_save, mode="w"), indent=4)
+
+    logger.info(f"[{uid}] Saved learning evaluation successfully")
+    if not log_exists:
+        kill_logger(logger)
+
 
 def plot_learning_evaluation(perplexity_by_iter: dict,
                              path_to_save: str = "",

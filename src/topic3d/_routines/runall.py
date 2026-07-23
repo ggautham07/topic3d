@@ -30,8 +30,8 @@ from os import path
 import logging
 from topic3d.workflow._parsers import parse_cli_arguments_runall, parse_params_json
 from topic3d.workflow._dataops import load_data_file, prepare_proximity_data
-from topic3d.workflow.core import initialize_cli_run, initialize_LDA_model, train_LDA_model, plot_learning_evaluation, \
-    decompose_data, save_results
+from topic3d.workflow.core import initialize_cli_run, initialize_LDA_model, train_LDA_model, \
+    save_learning_evaluation, plot_learning_evaluation, decompose_data, save_results
 
 
 def main(args_init):
@@ -101,6 +101,10 @@ def main(args_init):
                                    logger=logger)
     if args_full["evaluate_learning"]:
         model, perp_by_iter = result_train
+        save_learning_evaluation(perp_by_iter,
+                                 path_to_save=path.join(args_full["path_to_training"], "perplexity_evolution.json"),
+                                 uid=uid,
+                                 logger=logger)
         plot_learning_evaluation(perp_by_iter,
                                  path_to_save=path.join(args_full["path_to_training"], "perplexity_evolution.png"),
                                  uid=uid,
