@@ -192,7 +192,7 @@ class Topic3DResult:
 
 
     @staticmethod
-    def _compute_coherence_umass(components, data_used, num_top_pixels=10, randomize_data=False):
+    def _compute_coherence_umass_legacy(components, data_used, num_top_pixels=None, randomize_data=False):
         """
         Compute the uMass coherence score for each component.
 
@@ -249,7 +249,11 @@ class Topic3DResult:
 
 
     @staticmethod
-    def _compute_coherence_npmi_cos(CFM, data, num_top_pixels=None, randomize_data=False):
+    def _compute_coherence_npmi_legacy(CFM: np.ndarray,
+                                       data: np.ndarray,
+                                       num_top_pixels: int = None,
+                                       randomize_data: bool = False,
+                                       return_cos: bool = False):
         """
         Compute both the NPMI and cosine coherence scores for each component.
 
@@ -306,19 +310,77 @@ class Topic3DResult:
                     npmi[m, n] = - pmi / np.log2(p_mn + EPS)
                     npmi[n, m] = npmi[m, n]
         c_npmi = np.sum(npmi[np.triu_indices(num_top_pixels, k=1)])
-
-        # For each selected pixel, compute the norm of the NPMI computed for all the pixels (one vs all)
-        # Required for the calculation of the cosine similarity.
-        norm = np.linalg.norm(npmi, axis=1)
-        c_cos = 0
-        for m in range(0, num_top_pixels, 1):
-            for n in range(m + 1, num_top_pixels):
-                c_cos += np.dot(npmi[m, :], npmi[n, :]) / (norm[m] * norm[n])
-
-        coherence_cos = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_cos
         coherence_npmi = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_npmi
 
-        return coherence_npmi, coherence_cos
+        if return_cos:
+            # For each selected pixel, compute the norm of the NPMI computed for all the pixels (one vs all)
+            # Required for the calculation of the cosine similarity.
+            norm = np.linalg.norm(npmi, axis=1)
+            c_cos = 0
+            for m in range(0, num_top_pixels, 1):
+                for n in range(m + 1, num_top_pixels):
+                    c_cos += np.dot(npmi[m, :], npmi[n, :]) / (norm[m] * norm[n])
+            coherence_cos = 2 / (num_top_pixels * (num_top_pixels - 1)) * c_cos
+
+            return coherence_npmi, coherence_cos
+
+        return coherence_npmi
+
+
+    @staticmethod
+    def compute_pmi_full(X, gamma=1):
+
+        from scipy.linalg import issymmetric
+
+        EPS = 10**-5
+
+        assert X.ndim == 2
+
+        if (X.shape[0] == X.shape[1]) and issymmetric(X):
+            cooccur = X[:]
+        else:    
+            num_items = X.shape[0]
+            cooccur = X.T @ X
+
+        pij = cooccur / num_items
+        pij_safe = np.clip(pij, a_min=EPS, a_max=1)
+        
+        p = np.diag(pij)
+        pi_pj = p[:, None] * p[None, :]
+
+        valid = pi_pj > 0
+
+        pmi = np.full_like(pij, np.nan, dtype=float)
+        pmi[valid] = np.log2(pij_safe[valid] / pi_pj[valid])
+
+        npmi = np.full_like(pij, np.nan, dtype=float)
+        npmi[(pij == 0) & valid] = -1
+
+        mask = valid & (pij > 0) & (pij < 1)
+        npmi[mask] = pmi[mask] / -np.log2(pij_safe[mask])
+
+        return pmi**gamma, npmi**gamma
+
+    @staticmethod
+    def compute_coherence(npmi_mat: np.ndarray,
+                          motif: np.ndarray,
+                          num_top_px: int = None):
+
+        valid = np.nonzero(motif > 0.5)[0]
+        if len(valid) == 0:
+            return np.nan
+        if num_top_px is None:
+            idxs = valid[:]
+        else:
+            sort_idxs = np.argsort(motif)[::-1][:num_top_px]
+            idxs = np.intersect1d(valid, sort_idxs)
+
+        npmi_submat = npmi_mat[np.ix_(idxs, idxs)]
+        upper = np.triu_indices(len(idxs), k=1)
+        # coherence = np.nanmean(npmi_submat[upper])
+        coherence = 2 / (len(idxs) * len(idxs-1)) * np.nansum(npmi_submat[upper])
+
+        return coherence
 
 
     # NOTE vectorised version of jb's original code, NEEDS VALIDATION
@@ -860,7 +922,7 @@ class Topic3DModelPool():
         return Topic3DModelPool(models=models)
 
 
-    def rank_models(self, by="coherence", data_used: np.ndarray = None, num_top_pixels=20):
+    def rank_models(self, by="coherence", data_used: np.ndarray = None, num_top_pixels=None):
         """
         Rank models by coherence or perplexity.
         """
@@ -873,8 +935,11 @@ class Topic3DModelPool():
         if by == "coherence":
             scores = []
             for model in self.models:
-                coherence_calc = np.mean([Topic3DResult._compute_coherence_npmi_cos(CFM=comp, data=data_used, num_top_pixels=num_top_pixels)[0] \
-                                        for comp in model.components_])
+                coherence_calc = np.mean([Topic3DResult._compute_coherence_npmi_legacy(CFM=comp,
+                                                                                data=data_used,
+                                                                                num_top_pixels=num_top_pixels,
+                                                                                return_cos=False) \
+                                                                                    for comp in model.components_])
                 scores.append(np.mean(coherence_calc))
         elif by == "perplexity":
             scores = np.asarray([self._get_model_perplexity(model) for model in self.models])
@@ -893,9 +958,9 @@ class Topic3DModelPool():
             return self.rank_models(by=by)[0]
 
 
-    def compute_coherence_vs_num_CFMs(self, data_used: np.ndarray = None):
+    def compute_coherence_vs_num_CFMs(self, data_used: np.ndarray = None, num_top_pixels: int = None):
         """
-        Get coherence as a function of number of CFMs
+        Ge NPMI coherence as a function of number of CFMs
         """
         
         num_CFMs_unique = np.unique(self.num_CFMs_by_model)
@@ -904,8 +969,11 @@ class Topic3DModelPool():
             idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
             calc = []
             for i in idxs_reqd:
-                calc.append([Topic3DResult._compute_coherence_npmi_cos(CFM=comp, data=data_used)[0] \
-                                        for comp in self.models[i].components_])
+                calc.append([Topic3DResult._compute_coherence_npmi_legacy(CFM=comp,
+                                                                   data=data_used,
+                                                                   num_top_pixels=num_top_pixels,
+                                                                   return_cos=False) \
+                                                                    for comp in self.models[i].components_])
             coherence_scores.append(np.asarray(calc))
 
         return coherence_scores
@@ -925,7 +993,7 @@ class Topic3DModelPool():
             if by == "coherence":
                 coherence_calc = []
                 for i in idxs_reqd:
-                    coherence_calc.append([Topic3DResult._compute_coherence_npmi_cos(CFM=comp, data=data_used)[0] \
+                    coherence_calc.append([Topic3DResult._compute_coherence_npmi_legacy(CFM=comp, data=data_used) \
                                            for comp in self.models[i].components_])
                 scores.append(np.mean(coherence_calc))
             elif by == "perplexity":
@@ -986,7 +1054,7 @@ class Topic3DModelPool():
             for CFMs in self.CFMs_by_model:
                 coherence_by_CFM = []
                 for cfm in CFMs:
-                    c, _ = Topic3DResult._compute_coherence_npmi_cos(CFM=cfm,
+                    c, _ = Topic3DResult._compute_coherence_npmi_legacy(CFM=cfm,
                                                                      data=data_used,
                                                                      num_top_pixels=n_px)
                     coherence_by_CFM.append(c)
@@ -1032,9 +1100,9 @@ class Topic3DModelPool():
             for i in range(len(CFMs)):
                 data_rep = data_used[decomp_bin[:,i] == 1]
                 data_norep = data_used[decomp_bin[:,i] == 0]
-                c_rep, _ = Topic3DResult._compute_coherence_npmi_cos(CFM=CFMs[i],
+                c_rep, _ = Topic3DResult._compute_coherence_npmi_legacy(CFM=CFMs[i],
                                                                      data=data_rep,)
-                c_norep, _ = Topic3DResult._compute_coherence_npmi_cos(CFM=CFMs[i],
+                c_norep, _ = Topic3DResult._compute_coherence_npmi_legacy(CFM=CFMs[i],
                                                                        data=data_norep,)
                 coherence_by_CFM_rep.append(c_rep)
                 coherence_by_CFM_norep.append(c_norep)
@@ -1142,3 +1210,94 @@ class Topic3DModelPool():
     
     # def compute_consensus(self, metric="jensenshannon"):
     #     return
+
+# TODO REFINE & SORT INTO METHODS FOR TOPIC3DMODELPOOL
+# cfm_size_by_n_comps = {}
+
+# for n, components in enumerate(components_all):
+
+#     n_comps = components.shape[0]
+
+#     sizes = []
+#     for i in range(n_comps):
+#         sizes.append(np.sum(components[i] > 0.5))
+
+#     if n_comps not in cfm_size_by_n_comps.keys():
+#         cfm_size_by_n_comps[n_comps] = []
+#     cfm_size_by_n_comps[n_comps].extend(sizes)
+
+# num_components_final = []
+# sizes_means = []
+# sizes_stes = []
+
+# for n_comps, vals in cfm_size_by_n_comps.items():
+#     vals = np.asarray(vals)
+#     num_components_final.append(n_comps)
+#     sizes_means.append(np.nanmean(vals))
+#     sizes_stes.append(np.nanstd(vals) / np.sqrt(len(vals)))
+# sort_idxs = np.argsort(num_components_final)
+# num_components_final = np.asarray(num_components_final)[sort_idxs]
+# sizes_means = np.asarray(sizes_means)[sort_idxs]
+# sizes_stes = np.asarray(sizes_stes)[sort_idxs]
+# plt.errorbar(num_components_final, sizes_means, sizes_stes)
+# plt.xlabel("number of CFMs")
+# plt.ylabel("size of CFM")
+# sizes = [cfm_size_by_n_comps[n] for n in num_components_final]
+# plt.boxplot(x=sizes, tick_labels=num_components_final);
+# plt.xlabel("number of CFMs")
+# plt.ylabel("CFM size (in px)")
+# from itertools import chain
+
+# coherences_merged = list(chain.from_iterable([vals for vals in coherence_by_n_comps.values()]))
+# sizes_merged = list(chain.from_iterable([vals for vals in cfm_size_by_n_comps.values()]))
+# n_CFMs_merged = list(chain.from_iterable([[n] * len(vals) for n, vals in coherence_by_n_comps.items()]))
+
+# assert len(coherences_merged) == len(sizes_merged) == len(n_CFMs_merged)
+# plt.scatter(sizes_merged, coherences_merged, c=n_CFMs_merged, s=6, cmap="Set2")
+# plt.xlabel("CFM size (in px)")
+# plt.ylabel("NPMI coherence")
+# plt.colorbar(shrink=0.75, label="number of CFMs")
+
+
+
+# num_CFMs = np.unique(model_pool.num_CFMs_by_model)
+# reps_by_k = {n:[] for n in num_CFMs}
+# for md in model_pool.models:
+#     n = md.n_components
+#     reps_cutoff = (1 / n) + 0.1
+#     decomp = md.transform(data)
+#     reps = np.mean(decomp >= reps_cutoff, axis=0)
+#     reps_by_k[n].extend(reps)
+# reps_by_k
+# for n in reps_by_k.keys():
+#     reps_by_k[n] = np.asarray(reps_by_k[n]).flatten()
+#     print(reps_by_k[n].shape)
+# fig, axs = plt.subplots(nrows=3, ncols=3, sharex=True, sharey=True)
+# fig.supxlabel("representativity")
+# fig.supylabel("density")
+# for n, ax in zip(num_CFMs, axs.flat):
+#     r = np.sum(reps_by_k[n] < 0.05) / np.sum(reps_by_k[n] >= 0.05)
+#     # r = np.mean(reps_by_k[n] < 0.05)
+#     ax.hist(reps_by_k[n], bins=20, density=True)
+#     ax.set_title(f"{n} CFMs, $r_5 = ${r:.2f}", fontsize=8)
+# fig.set_layout_engine("tight")
+# fig, axs = plt.subplots(nrows=3, ncols=3, sharex=True, sharey=True)
+# fig.supxlabel("representativity")
+# fig.supylabel("counts")
+# for n, ax in zip(num_CFMs, axs.flat):
+#     ax.set_yscale("log")
+#     ax.hist(reps_by_k[n], bins=20)
+#     ax.set_title(f"{n} CFMs")
+# fig.set_layout_engine("tight")
+# fig, ax = plt.subplots()
+# ax.set_xlabel("representativity")
+# ax.set_ylabel("density")
+# for n in num_CFMs:
+#     ax.hist(reps_by_k[n], bins=20, density=True, alpha=0.5, label=f"{n} CFMs")
+# fig.set_layout_engine("tight")
+# plt.legend()
+# CFMs_rep_mean = [np.mean(reps_by_k[n] >= 0.05) for n in num_CFMs]
+# CFMs_rep_std = [np.std(reps_by_k[n] >= 0.05) for n in num_CFMs]
+# plt.plot(num_CFMs, CFMs_rep_mean, "o-")
+# plt.ylabel("mean representativity $\geq 5\%$")
+# plt.xlabel("# CFMs")
