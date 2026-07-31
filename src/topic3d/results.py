@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from numbers import Number
 from os import path
 from scipy.spatial.distance import squareform, pdist
+from scipy.linalg import issymmetric
 from . import visualization as vzl
 
 
@@ -255,7 +256,7 @@ class Topic3DResult:
                                        randomize_data: bool = False,
                                        return_cos: bool = False):
         """
-        Compute both the NPMI and cosine coherence scores for each component.
+        Compute the NPMI and cosine coherence scores from the proximity data for each CFM.
 
         Parameters
         ----------
@@ -328,145 +329,178 @@ class Topic3DResult:
 
 
     @staticmethod
-    def compute_pmi_full(X, gamma=1):
-
-        from scipy.linalg import issymmetric
+    def _compute_pmi_matrix(X: np.ndarray, gamma=1):
 
         EPS = 10**-5
 
+        # If X is proximity data, compute cooccurrence matrix
         assert X.ndim == 2
-
         if (X.shape[0] == X.shape[1]) and issymmetric(X):
             cooccur = X[:]
         else:    
             num_items = X.shape[0]
             cooccur = X.T @ X
 
+        # Get probabilities for PMI computation from cooccurrence matrix
         pij = cooccur / num_items
-        pij_safe = np.clip(pij, a_min=EPS, a_max=1)
-        
+        pij_safe = np.clip(pij, a_min=EPS, a_max=1)     # to ensure postive non-zero values during computations
         p = np.diag(pij)
         pi_pj = p[:, None] * p[None, :]
 
+        # To take only values where probabilities are > 0, rest will be NaN later
         valid = pi_pj > 0
 
+        # Compute the PMI for all pairs
         pmi = np.full_like(pij, np.nan, dtype=float)
         pmi[valid] = np.log2(pij_safe[valid] / pi_pj[valid])
 
+        # Initialize NPMI matrix and assign values to edge case not covered by the usual computation
         npmi = np.full_like(pij, np.nan, dtype=float)
         npmi[(pij == 0) & valid] = -1
 
+        # Compute the NPMI
         mask = valid & (pij > 0) & (pij < 1)
         npmi[mask] = pmi[mask] / -np.log2(pij_safe[mask])
 
+        # Return values after raising to power in case differences need to be emphasized
         return pmi**gamma, npmi**gamma
+    
 
+    # NOTE NPMI coherence could be vectorized to compute for multiple CFMs, but seems unnecessary
     @staticmethod
-    def compute_coherence(npmi_mat: np.ndarray,
-                          motif: np.ndarray,
-                          num_top_px: int = None):
+    def _compute_coherence_npmi(npmi_mat: np.ndarray,
+                                CFM: np.ndarray,
+                                num_top_px: int = -1,
+                                ignore_nans: bool = True,
+                                return_cosine: bool = False):
 
-        valid = np.nonzero(motif > 0.5)[0]
+        # Take only pixels with an unnormalized pseudocount value >> 0
+        valid = np.nonzero(CFM >= 1)[0]
         if len(valid) == 0:
             return np.nan
-        if num_top_px is None:
+
+        # Take all valid pixel indices if -1, otherwise, the top pixels based on pseudocount values
+        if num_top_px == -1:
             idxs = valid[:]
         else:
-            sort_idxs = np.argsort(motif)[::-1][:num_top_px]
+            sort_idxs = np.argsort(CFM)[::-1][:num_top_px]
             idxs = np.intersect1d(valid, sort_idxs)
+        num_top_px_true = len(idxs)
 
+        # Extract NPMI submatrix based on indices
         npmi_submat = npmi_mat[np.ix_(idxs, idxs)]
-        upper = np.triu_indices(len(idxs), k=1)
-        # coherence = np.nanmean(npmi_submat[upper])
-        coherence = 2 / (len(idxs) * len(idxs-1)) * np.nansum(npmi_submat[upper])
+        upper = np.triu_indices(num_top_px_true, k=1)
 
-        return coherence
+        # Compute the NPMI coherence
+        if ignore_nans:
+            coherence_npmi = np.nanmean(npmi_submat[upper])
+        else:
+            coherence_npmi = 2 / (num_top_px_true * (num_top_px_true - 1)) * np.nansum(npmi_submat[upper])
+
+        # Compute the cosine coherence
+        if return_cosine:
+            norm = np.linalg.norm(npmi_submat, axis=1)
+            cos = 0
+            for m in range(0, num_top_px_true):
+                for n in range(m+1, num_top_px_true):
+                    cos += np.dot(npmi_submat[m, :], npmi_submat[n, :]) / (norm[m] * norm[n])
+            if ignore_nans:
+                coherence_cos = np.nanmean(cos)
+            else:
+                coherence_cos = 2 / (num_top_px_true * (num_top_px_true - 1)) * cos
+
+            return coherence_npmi, coherence_cos
+
+        return coherence_npmi
 
 
-    # NOTE vectorised version of jb's original code, NEEDS VALIDATION
-    # TODO ordering by maximum pseudocount
-    def order_CFMs(self, weight_threshold: Number = None):
+    def compute_coherence(self,
+                          data: np.ndarray,
+                          num_top_px: int = -1,
+                          gamma = 1,
+                          ignore_nans: bool = True):
         """
-        Sort components by representativity based on a weight threshold.
+        Compute coherence of CFMs using NPMI and cosine.
 
         Parameters
         ----------
-        threshold : float, optional
+        data : ndarray
+            Proximity data to check coherence with (usually training data)
+        num_top_px : int, optional
+            Number of top pixels to use per CFM. Defaults to all valid pixels for each CFM
+        gamma : float, optional
+            Power to raise computed NPMI coherence values (default=1), used to emphasize differences
+        ignore_nans : bool, optional
+            Ignore NaNs in the computed NPMI values during coherence estimation 
+
+        Returns
+        -------
+        (coherence_npmi, coherence_cos) : tuple
+            NPMI and cosine coherence averaged over all CFMs
+
+        Examples
+        --------
+        >>> model.compute_coherence(num_top_px=10)
+        """
+
+        # Compute normalized pointwise mutual information from entire proximity data
+        _, npmi_mat = self._compute_pmi_matrix(X=data, gamma=gamma)
+
+        # Compute the coherence using the above matrix for all the CFMs
+        coherence_npmi_all = np.empty(self.num_CFMs)
+        coherence_cos_all = np.copy(coherence_npmi_all)
+        for i in range(self.num_CFMs):
+            cc_npmi, cc_cos = self._compute_coherence_npmi(npmi_mat=npmi_mat,
+                                                           CFM=self.CFMs[i],
+                                                           num_top_px=num_top_px,
+                                                           ignore_nans=ignore_nans,
+                                                           return_cosine=True)
+            coherence_npmi_all[i] = cc_npmi
+            coherence_cos_all[i] = cc_cos
+
+        # Average over number of CFMs without ignoring NaNs (seems more suitable for aggregation)
+        coherence_npmi = np.nansum(coherence_npmi_all) / self.num_CFMs
+        coherence_cos = np.nansum(coherence_cos_all) / self.num_CFMs
+
+        return coherence_npmi, coherence_cos
+
+
+    def order_CFMs(self, by="representativity", weight_threshold: Number = None):
+        """
+        Sort components by representativity (based on a weight threshold, the default) or unnormalized pseudocount.
+
+        Parameters
+        ----------
+        weight_threshold : float, optional
             Minimum weight above which a component is considered present. If None, uses the model's default threshold.
-        return_freqs : bool, optional
-            Whether to return the frequency of each component across all samples.
 
         Returns
         -------
         np.ndarray
             Sorted indices of components (most to least representative).
-        np.ndarray, optional
-            Frequencies of each component if `return_freqs` is True.
 
         Examples
         --------
         >>> idxs = model.sort_components(threshold=0.3)
-        >>> idxs, freqs = model.sort_components(threshold=0.3, return_freqs=True)
         """
 
-        if weight_threshold is None:
-            weight_threshold = self._extract_representativity_threshold(self.decomposition)
+        assert by in ["representativity", "pseudocount"]
+
+        # Get representativity/max. pseudocount for all CFMs
+        if by == "representativity":
+            if weight_threshold is None:
+                weight_threshold = self._extract_representativity_threshold(self.decomposition)
+            else:
+                assert isinstance(weight_threshold, Number)
+            assert 0 < weight_threshold <= 1        
+            vals = self.compute_CFM_representativity(weight_threshold)
         else:
-            assert isinstance(weight_threshold, Number)
-        
-        reprez = self.compute_CFM_representativity(weight_threshold)
-        idxs = np.argsort(reprez)[::-1]
+            vals = np.max(self.CFMs, axis=1)
+
+        # Sort in descending order
+        idxs = np.argsort(vals)[::-1]
 
         return idxs
-
-
-    # # TODO split NPMI and cosine
-    # # TODO update all coherence computations to one CFM given data, number of top pixels automatically picked
-    # # if not passed by the user
-    # def compute_CFM_coherence(self, data: np.ndarray, method: str = "npmi", num_top_pixels: int = None):
-    #     """
-    #     Compute coherence metrics (NPMI, cosine, uMass) for topic components.
-
-    #     Parameters
-    #     ----------
-    #     method : str, optional
-    #         Which coherence metric to compute: "npmi-cos", "umass", or "all" (default).
-    #     num_top_pixels : int, optional
-    #         Number of top pixels to use per component. Defaults to 10% of component length.
-
-    #     Returns
-    #     -------
-    #     tuple
-    #         Coherence scores depending on selected method:
-    #         - If "npmi-cos": (npmi, cosine)
-    #         - If "umass": (umass,)
-    #         - If "all": ((npmi, cosine), umass)
-
-    #     Examples
-    #     --------
-    #     >>> model.coherence(method="npmi-cos")
-    #     """
-
-    #     assert isinstance(method, str) and method.lower() in ["npmi-cos", "umass", "all"]
-    #     assert self.data_training is not None
-    #     if num_top_pixels is None:
-    #         num_top_pixels = self.CFMs.shape[1] // 10
-    #     else:
-    #         isinstance(num_top_pixels, int)
-
-    #     out = []
-    #     if method in ["npmi", "cos", "all"]:
-    #         out.append(self._compute_coherence_npmi_cos(CFM=self.CFMs,
-    #                                                     data=data,
-    #                                                     num_top_pixels=num_top_pixels,
-    #                                                     randomize_data=False))
-    #     if method in ["umass", "all"]:
-    #         out.append(self._compute_coherence_umass(components=self.CFMs,
-    #                                                  data_used=data,
-    #                                                  num_top_pixels=num_top_pixels,
-    #                                                  randomize_data=False))
-
-    #     return tuple(out)
 
 
     # TODO returning mean divergence for decomposition, sorting the matrix by least to most distant?
@@ -922,29 +956,60 @@ class Topic3DModelPool():
         return Topic3DModelPool(models=models)
 
 
-    def rank_models(self, by="coherence", data_used: np.ndarray = None, num_top_pixels=None):
+    def rank_models(self, by="perplexity", **kwargs):
         """
-        Rank models by coherence or perplexity.
+        Rank models by perplexity or coherence.
+
+        If by is coherence, supply the following kwargs.
+
+        data : ndarray
+            Proximity data to check coherence with (usually training data)
+        num_top_px : int, optional
+            Number of top pixels to use per CFM. Defaults to all valid pixels for each CFM
+        gamma : float, optional
+            Power to raise computed NPMI coherence values (default=1), used to emphasize differences
+        ignore_nans : bool, optional
+            Ignore NaNs in the computed NPMI values during coherence estimation 
+
+        
         """
 
         assert isinstance(by, str) and by in ["coherence", "perplexity"]
-        # TODO common proximity data checking function, or FOF loader everywhere
+
+        # Handling parameters for coherence-based ranking
         if by == "coherence":
-            assert isinstance(data_used, np.ndarray) and data_used.ndim in [2, 3]
-        
+            data = kwargs["data"]
+            assert isinstance(data, np.ndarray)     # TODO common proximity data checking function, or FOF loader everywhere
+            num_top_px = kwargs.get("num_top_px", -1)
+            gamma = kwargs.get("gamma", 1)
+            ignore_nans = kwargs.get("ignore_nans", True)
+
+        # Computing values for coherence-based ranking
         if by == "coherence":
+            # Compute normalized pointwise mutual information from entire proximity data
+            _, npmi_mat = self._compute_pmi_matrix(X=data, gamma=gamma)
             scores = []
             for model in self.models:
-                coherence_calc = np.mean([Topic3DResult._compute_coherence_npmi_legacy(CFM=comp,
-                                                                                data=data_used,
-                                                                                num_top_pixels=num_top_pixels,
-                                                                                return_cos=False) \
-                                                                                    for comp in model.components_])
-                scores.append(np.mean(coherence_calc))
-        elif by == "perplexity":
+            # Compute the coherence using the above matrix for all the CFMs
+                coherence = np.empty(len(model.components_))
+                for i in range(len(model.components_)):
+                    cc_npmi = Topic3DResult._compute_coherence_npmi(npmi_mat=npmi_mat,
+                                                                    CFM=self.CFMs[i],
+                                                                    num_top_px=num_top_px,
+                                                                    ignore_nans=ignore_nans,
+                                                                    return_cosine=False)
+                    coherence[i] = cc_npmi
+
+                # Average over number of CFMs without ignoring NaNs (seems more suitable for aggregation)
+                scores.append(np.nansum(coherence) / len(model.components_))
+
+        # Computing them for perplexity-based ranking
+        else:
             scores = np.asarray([self._get_model_perplexity(model) for model in self.models])
 
-        return np.asarray(self.models)[np.argsort(scores) if by=="perplexity" else np.argsort(scores)[::-1]]
+        sort_idxs = np.argsort(scores) if by=="perplexity" else np.argsort(scores)[::-1]
+
+        return np.asarray(self.models)[sort_idxs]
 
 
     def find_best_model(self, by="coherence", data_used: np.ndarray = None) -> LatentDirichletAllocation:
@@ -953,7 +1018,7 @@ class Topic3DModelPool():
         """
 
         if by == "coherence":
-            return self.rank_models(by=by, data_used=data_used)[0]
+            return self.rank_models(by=by, data=data_used)[0]
         elif by == "perplexity":
             return self.rank_models(by=by)[0]
 
