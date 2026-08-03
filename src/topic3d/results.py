@@ -329,7 +329,7 @@ class Topic3DResult:
 
 
     @staticmethod
-    def _compute_pmi_matrix(X: np.ndarray, gamma=1):
+    def _compute_pmi_matrix(X: np.ndarray, gamma: float = 1.0):
 
         EPS = 10**-5
 
@@ -417,7 +417,7 @@ class Topic3DResult:
     def compute_coherence(self,
                           data: np.ndarray,
                           num_top_px: int = -1,
-                          gamma = 1,
+                          gamma: float = 1.0,
                           ignore_nans: bool = True):
         """
         Compute coherence of CFMs using NPMI and cosine.
@@ -960,7 +960,7 @@ class Topic3DModelPool():
         """
         Rank models by perplexity or coherence.
 
-        If by is coherence, supply the following kwargs.
+        If by is coherence, pass the following kwargs.
 
         data : ndarray
             Proximity data to check coherence with (usually training data)
@@ -987,7 +987,7 @@ class Topic3DModelPool():
         # Computing values for coherence-based ranking
         if by == "coherence":
             # Compute normalized pointwise mutual information from entire proximity data
-            _, npmi_mat = self._compute_pmi_matrix(X=data, gamma=gamma)
+            _, npmi_mat = Topic3DResult._compute_pmi_matrix(X=data, gamma=gamma)
             scores = []
             for model in self.models:
             # Compute the coherence using the above matrix for all the CFMs
@@ -999,15 +999,15 @@ class Topic3DModelPool():
                                                                     ignore_nans=ignore_nans,
                                                                     return_cosine=False)
                     coherence[i] = cc_npmi
-
                 # Average over number of CFMs without ignoring NaNs (seems more suitable for aggregation)
                 scores.append(np.nansum(coherence) / len(model.components_))
 
         # Computing them for perplexity-based ranking
-        else:
+        elif by == "perplexity":
             scores = np.asarray([self._get_model_perplexity(model) for model in self.models])
 
-        sort_idxs = np.argsort(scores) if by=="perplexity" else np.argsort(scores)[::-1]
+        # NOTE needs updating if other methods are included later
+        sort_idxs = np.argsort(scores) if by=="perplexity" else np.argsort(scores)[::-1] 
 
         return np.asarray(self.models)[sort_idxs]
 
@@ -1023,55 +1023,79 @@ class Topic3DModelPool():
             return self.rank_models(by=by)[0]
 
 
-    def compute_coherence_vs_num_CFMs(self, data_used: np.ndarray = None, num_top_pixels: int = None):
+    def compute_coherence_vs_num_CFMs(self,
+                                      data: np.ndarray,
+                                      gamma: float = 1.0,
+                                      num_top_px: int = -1,
+                                      ignore_nans: bool = True):
         """
-        Ge NPMI coherence as a function of number of CFMs
+        Compute the NPMI coherence as a function of number of CFMs
         """
         
         num_CFMs_unique = np.unique(self.num_CFMs_by_model)
-        coherence_scores = []
-        for n in num_CFMs_unique:
-            idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
-            calc = []
-            for i in idxs_reqd:
-                calc.append([Topic3DResult._compute_coherence_npmi_legacy(CFM=comp,
-                                                                   data=data_used,
-                                                                   num_top_pixels=num_top_pixels,
-                                                                   return_cos=False) \
-                                                                    for comp in self.models[i].components_])
-            coherence_scores.append(np.asarray(calc))
 
-        return coherence_scores
+        npmi_mat = Topic3DResult._compute_pmi_matrix(X=data, gamma=gamma)
+
+        coherence_by_n = {n: [] for n in num_CFMs_unique}
+
+        for n in num_CFMs_unique:
+            model_idxs = np.nonzero(self.num_CFMs_by_model == n)[0]
+            for i in model_idxs:
+                cc_npmi = []
+                for comp in self.models[i].components_:
+                    cc_npmi.append(Topic3DResult._compute_coherence_npmi(npmi_mat=npmi_mat,
+                                                                         CFM=comp,
+                                                                         num_top_px=num_top_px,
+                                                                         ignore_nans=ignore_nans,
+                                                                         return_cosine=False))
+                coherence_by_n[n].append(np.nansum(cc_npmi) / n)
+
+        return coherence_by_n
     
 
-    def rank_num_CFMs(self, by="coherence", data_used: np.ndarray = None):
+    def rank_num_CFMs(self, by="perplexity", **kwargs):
         """
         Rank models by coherence or perplexity
         """
         
         assert isinstance(by, str) and by in ["coherence", "perplexity"]
-        
+
+        # Handling parameters for coherence-based ranking
+        if by == "coherence":
+            data = kwargs["data"]
+            assert isinstance(data, np.ndarray)     # TODO common proximity data checking function, or FOF loader everywhere
+            num_top_px = kwargs.get("num_top_px", -1)
+            gamma = kwargs.get("gamma", 1)
+            ignore_nans = kwargs.get("ignore_nans", True)
+
         num_CFMs_unique = np.unique(self.num_CFMs_by_model)
-        scores = []
-        for n in num_CFMs_unique:
-            idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
-            if by == "coherence":
-                coherence_calc = []
-                for i in idxs_reqd:
-                    coherence_calc.append([Topic3DResult._compute_coherence_npmi_legacy(CFM=comp, data=data_used) \
-                                           for comp in self.models[i].components_])
-                scores.append(np.mean(coherence_calc))
-            elif by == "perplexity":
-                scores.append(np.mean([self._get_model_perplexity(self.models[i]) for i in idxs_reqd]))
 
-        print(scores)
+        if by == "coherence":
+            coherence_by_n = self.compute_coherence_vs_num_CFMs(data=data,
+                                                                gamma=gamma,
+                                                                num_top_px=num_top_px,
+                                                                ignore_nans=ignore_nans)
+            scores = [np.mean(coherence_by_n[n]) for n in num_CFMs_unique]
+
+        elif by == "perplexity":
+            scores = []
+            for n in num_CFMs_unique:
+                model_idxs = np.nonzero(self.num_CFMs_by_model == n)[0]
+                scores.append(np.mean([self._get_model_perplexity(self.models[i]) \
+                                       for i in model_idxs]))
+
+        for n, score in zip(num_CFMs_unique, scores):
+            print(f"{n} CFMs: {score:.3f}")
+
+        # NOTE will need updating if other methods are included
+        sort_idxs = np.argsort(scores) if by=="perplexity" else np.argsort(scores)[::-1]
         
-        return num_CFMs_unique[np.argsort(scores) if by=="perplexity" else np.argsort(scores)[::-1]]
+        return num_CFMs_unique[sort_idxs]
 
 
-    def find_best_num_CFMs(self, data_used: np.ndarray):
+    def find_best_num_CFMs(self, by="perplexity", **kwargs):
 
-        ranking = self.rank_num_CFMs(by="coherence", data_used=data_used)
+        ranking = self.rank_num_CFMs(by=by, kwargs=kwargs)
         means_empty = self.compute_mean_empty_vs_num_CFMs()
         for n_CFMs in ranking:
             if means_empty[n_CFMs] == 0:
@@ -1150,73 +1174,72 @@ class Topic3DModelPool():
         return fig
     
 
-    def plot_mean_coherence_vs_num_CFMs(self, data_used: np.ndarray, method: str = "npmi", path_to_save: str = ""):
+    # def plot_mean_coherence_vs_num_CFMs(self, data_used: np.ndarray, method: str = "npmi", path_to_save: str = ""):
         
-        num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
+    #     num_CFMs_by_model_unique = np.unique(self.num_CFMs_by_model)
 
-        fig, ax = plt.subplots()
-        coherence_all_rep = []
-        coherence_all_norep = []
-        for model, CFMs in zip(self.models, self.CFMs_by_model):
-            decomp = model.transform(data_used)
-            decomp_bin = decomp >= (1 / model.n_components + 0.1)
-            coherence_by_CFM_rep = []
-            coherence_by_CFM_norep = []
-            for i in range(len(CFMs)):
-                data_rep = data_used[decomp_bin[:,i] == 1]
-                data_norep = data_used[decomp_bin[:,i] == 0]
-                c_rep, _ = Topic3DResult._compute_coherence_npmi_legacy(CFM=CFMs[i],
-                                                                     data=data_rep,)
-                c_norep, _ = Topic3DResult._compute_coherence_npmi_legacy(CFM=CFMs[i],
-                                                                       data=data_norep,)
-                coherence_by_CFM_rep.append(c_rep)
-                coherence_by_CFM_norep.append(c_norep)
-            coherence_all_rep.append(coherence_by_CFM_rep)
-            coherence_all_norep.append(coherence_by_CFM_norep)
-        coherences_rep_means = []
-        coherences_rep_stds = []
-        coherences_norep_means = []
-        coherences_norep_stds = []        
-        for n in num_CFMs_by_model_unique:
-            idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
-            cohrs_rep = []
-            cohrs_norep = []
-            for i in idxs_reqd:
-                cohrs_rep.extend(coherence_all_rep[i])
-                cohrs_norep.extend(coherence_all_norep[i])
-            coherences_rep_means.append(np.mean(cohrs_rep))
-            coherences_rep_stds.append(np.std(cohrs_rep))
-            coherences_norep_means.append(np.mean(cohrs_norep))
-            coherences_norep_stds.append(np.std(cohrs_norep))
+    #     fig, ax = plt.subplots()
+    #     coherence_all_rep = []
+    #     coherence_all_norep = []
+    #     for model, CFMs in zip(self.models, self.CFMs_by_model):
+    #         decomp = model.transform(data_used)
+    #         decomp_bin = decomp >= (1 / model.n_components + 0.1)
+    #         coherence_by_CFM_rep = []
+    #         coherence_by_CFM_norep = []
+    #         for i in range(len(CFMs)):
+    #             data_rep = data_used[decomp_bin[:,i] == 1]
+    #             data_norep = data_used[decomp_bin[:,i] == 0]
+    #             c_rep, _ = Topic3DResult._compute_coherence_npmi_legacy(CFM=CFMs[i],
+    #                                                                  data=data_rep,)
+    #             c_norep, _ = Topic3DResult._compute_coherence_npmi_legacy(CFM=CFMs[i],
+    #                                                                    data=data_norep,)
+    #             coherence_by_CFM_rep.append(c_rep)
+    #             coherence_by_CFM_norep.append(c_norep)
+    #         coherence_all_rep.append(coherence_by_CFM_rep)
+    #         coherence_all_norep.append(coherence_by_CFM_norep)
+    #     coherences_rep_means = []
+    #     coherences_rep_stds = []
+    #     coherences_norep_means = []
+    #     coherences_norep_stds = []        
+    #     for n in num_CFMs_by_model_unique:
+    #         idxs_reqd = np.nonzero(self.num_CFMs_by_model == n)[0]
+    #         cohrs_rep = []
+    #         cohrs_norep = []
+    #         for i in idxs_reqd:
+    #             cohrs_rep.extend(coherence_all_rep[i])
+    #             cohrs_norep.extend(coherence_all_norep[i])
+    #         coherences_rep_means.append(np.mean(cohrs_rep))
+    #         coherences_rep_stds.append(np.std(cohrs_rep))
+    #         coherences_norep_means.append(np.mean(cohrs_norep))
+    #         coherences_norep_stds.append(np.std(cohrs_norep))
 
-        ax.errorbar(x=num_CFMs_by_model_unique,
-                    y=coherences_rep_means,
-                    yerr=coherences_rep_stds,
-                    fmt="s-",
-                    color="C0",
-                    capsize=2.5,
-                    label="representative")
-        ax.errorbar(x=num_CFMs_by_model_unique,
-                    y=coherences_norep_means,
-                    yerr=coherences_norep_stds,
-                    fmt="o-",
-                    color="C7",
-                    capsize=2.5,
-                    label="non-representative")
+    #     ax.errorbar(x=num_CFMs_by_model_unique,
+    #                 y=coherences_rep_means,
+    #                 yerr=coherences_rep_stds,
+    #                 fmt="s-",
+    #                 color="C0",
+    #                 capsize=2.5,
+    #                 label="representative")
+    #     ax.errorbar(x=num_CFMs_by_model_unique,
+    #                 y=coherences_norep_means,
+    #                 yerr=coherences_norep_stds,
+    #                 fmt="o-",
+    #                 color="C7",
+    #                 capsize=2.5,
+    #                 label="non-representative")
         
-        ax.set_xlabel("# CFMs")
-        ax.set_ylabel("mean NPMI coherence")
-        plt.legend()
+    #     ax.set_xlabel("# CFMs")
+    #     ax.set_ylabel("mean NPMI coherence")
+    #     plt.legend()
         
-        if isinstance(path_to_save, str) and len(path_to_save) > 0:
-            fig.savefig(path_to_save, bbox_inches="tight")
-            plt.close(fig)
-        return fig
+    #     if isinstance(path_to_save, str) and len(path_to_save) > 0:
+    #         fig.savefig(path_to_save, bbox_inches="tight")
+    #         plt.close(fig)
+    #     return fig
 
 
-
-    @staticmethod
-    def count_empty_CFMs(CFMs):
+    # @staticmethod
+    # def count_empty_CFMs(CFMs):
 
         counter = 0
         for l in range(len(CFMs)):
