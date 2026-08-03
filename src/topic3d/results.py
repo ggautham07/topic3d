@@ -374,6 +374,8 @@ class Topic3DResult:
                                 ignore_nans: bool = True,
                                 return_cosine: bool = False):
 
+        assert isinstance(npmi_mat, np.ndarray) and issymmetric(npmi_mat)
+
         # Take only pixels with an unnormalized pseudocount value >> 0
         valid = np.nonzero(CFM >= 1)[0]
         if len(valid) == 0:
@@ -994,7 +996,7 @@ class Topic3DModelPool():
                 coherence = np.empty(len(model.components_))
                 for i in range(len(model.components_)):
                     cc_npmi = Topic3DResult._compute_coherence_npmi(npmi_mat=npmi_mat,
-                                                                    CFM=self.CFMs[i],
+                                                                    CFM=model.components_[i],
                                                                     num_top_px=num_top_px,
                                                                     ignore_nans=ignore_nans,
                                                                     return_cosine=False)
@@ -1012,13 +1014,13 @@ class Topic3DModelPool():
         return np.asarray(self.models)[sort_idxs]
 
 
-    def find_best_model(self, by="coherence", data_used: np.ndarray = None) -> LatentDirichletAllocation:
+    def find_best_model(self, by="perplexity", **kwargs) -> LatentDirichletAllocation:
         """
         Find the best model by coherence or perplexity.
         """
 
         if by == "coherence":
-            return self.rank_models(by=by, data=data_used)[0]
+            return self.rank_models(by=by, **kwargs)[0]
         elif by == "perplexity":
             return self.rank_models(by=by)[0]
 
@@ -1034,7 +1036,7 @@ class Topic3DModelPool():
         
         num_CFMs_unique = np.unique(self.num_CFMs_by_model)
 
-        npmi_mat = Topic3DResult._compute_pmi_matrix(X=data, gamma=gamma)
+        _, npmi_mat = Topic3DResult._compute_pmi_matrix(X=data, gamma=gamma)
 
         coherence_by_n = {n: [] for n in num_CFMs_unique}
 
@@ -1095,7 +1097,7 @@ class Topic3DModelPool():
 
     def find_best_num_CFMs(self, by="perplexity", **kwargs):
 
-        ranking = self.rank_num_CFMs(by=by, kwargs=kwargs)
+        ranking = self.rank_num_CFMs(by=by, **kwargs)
         means_empty = self.compute_mean_empty_vs_num_CFMs()
         for n_CFMs in ranking:
             if means_empty[n_CFMs] == 0:
@@ -1238,8 +1240,8 @@ class Topic3DModelPool():
     #     return fig
 
 
-    # @staticmethod
-    # def count_empty_CFMs(CFMs):
+    @staticmethod
+    def count_empty_CFMs(CFMs):
 
         counter = 0
         for l in range(len(CFMs)):
