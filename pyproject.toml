@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "topic3d"
-version = "0.0.0-dev.11"
+version = "0.0.0-dev.12"
 description = "Topic decomposition of chromatin tracing data"
 authors = [
   {name = "Gautham Ganesh", email = "gautham.ganesh@cbs.cnrs.fr"},

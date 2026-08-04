@@ -2,11 +2,10 @@
 src/topic3d.egg-info/
 src/topic3d/__pycache__/
 tests/
-docs/build/
 docs/source/getting_started/tutorials/data/
 docs/source/getting_started/tutorials/results/
 docs/source/getting_started/tutorials/models/bintu_models/
 examples/transfer.sh
-__pycache__/
-build/
+**/__pycache__/
+**/build/
 temp/

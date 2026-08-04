@@ -936,6 +936,15 @@ class Topic3DModelPool():
         self.num_CFMs_by_model = np.asarray([len(CFMs) for CFMs in self.CFMs_by_model])
 
 
+    # TODO Ideally, it would be best to compute CFMs and store them when the user runs this method
+    def compute_coherence_scores(self):
+        pass
+
+    #TODO same here
+    def compute_CFM_sizes(self):
+        pass
+
+
     @staticmethod
     def _get_model_perplexity(model):
         return model.bound_
@@ -1301,55 +1310,106 @@ class Topic3DModelPool():
     # def compute_consensus(self, metric="jensenshannon"):
     #     return
 
-# TODO REFINE & SORT INTO METHODS FOR TOPIC3DMODELPOOL
-# cfm_size_by_n_comps = {}
 
-# for n, components in enumerate(components_all):
+    def compute_CFM_size_vs_num_CFMs(self, min_pseudoucount: float = 0.5):
+        """
+        Compute the sizes of CFMs as a function of the number of CFMs used in training.
 
-#     n_comps = components.shape[0]
+        Parameters
+        --------
+        min_pseudocount : float
+            minimum value of (unnormalized) pseudocount to include the pixel in size computation
 
-#     sizes = []
-#     for i in range(n_comps):
-#         sizes.append(np.sum(components[i] > 0.5))
+        Returns
+        --------
+        size_by_n : dict
+            CFM sizes classified by number of CFMs detected in the model pool
+        """
 
-#     if n_comps not in cfm_size_by_n_comps.keys():
-#         cfm_size_by_n_comps[n_comps] = []
-#     cfm_size_by_n_comps[n_comps].extend(sizes)
+        num_CFMs = np.unique(self.num_CFMs_by_model)
 
-# num_components_final = []
-# sizes_means = []
-# sizes_stes = []
+        sizes_by_n = {n: [] for n in num_CFMs}
 
-# for n_comps, vals in cfm_size_by_n_comps.items():
-#     vals = np.asarray(vals)
-#     num_components_final.append(n_comps)
-#     sizes_means.append(np.nanmean(vals))
-#     sizes_stes.append(np.nanstd(vals) / np.sqrt(len(vals)))
-# sort_idxs = np.argsort(num_components_final)
-# num_components_final = np.asarray(num_components_final)[sort_idxs]
-# sizes_means = np.asarray(sizes_means)[sort_idxs]
-# sizes_stes = np.asarray(sizes_stes)[sort_idxs]
-# plt.errorbar(num_components_final, sizes_means, sizes_stes)
-# plt.xlabel("number of CFMs")
-# plt.ylabel("size of CFM")
-# sizes = [cfm_size_by_n_comps[n] for n in num_components_final]
-# plt.boxplot(x=sizes, tick_labels=num_components_final);
-# plt.xlabel("number of CFMs")
-# plt.ylabel("CFM size (in px)")
-# from itertools import chain
+        for n in num_CFMs:
+            model_idxs = np.nonzero(self.num_CFMs_by_model == n)[0]
+            for i in model_idxs:
+                sizes_by_n[n].extend(np.sum(self.CFMs_by_model[i] >= min_pseudoucount, axis=1))
+            sizes_by_n[n] = np.asarray(sizes_by_n[n]).flatten()
 
-# coherences_merged = list(chain.from_iterable([vals for vals in coherence_by_n_comps.values()]))
-# sizes_merged = list(chain.from_iterable([vals for vals in cfm_size_by_n_comps.values()]))
-# n_CFMs_merged = list(chain.from_iterable([[n] * len(vals) for n, vals in coherence_by_n_comps.items()]))
-
-# assert len(coherences_merged) == len(sizes_merged) == len(n_CFMs_merged)
-# plt.scatter(sizes_merged, coherences_merged, c=n_CFMs_merged, s=6, cmap="Set2")
-# plt.xlabel("CFM size (in px)")
-# plt.ylabel("NPMI coherence")
-# plt.colorbar(shrink=0.75, label="number of CFMs")
+        return sizes_by_n
 
 
+    def plot_mean_CFM_size_vs_num_CFMs(self, min_pseudocount: float = 0.5, path_to_save: str = ""):
+        """
+        Plot mean CFM sizes as a function of number of CFMs used in training.
+        """
 
+        sizes_by_n = self.compute_CFM_size_vs_num_CFMs(min_pseudoucount=min_pseudocount)
+
+        num_CFMs = []
+        sizes_means = []
+        sizes_std_errs = []
+        for n, sizes in sizes_by_n.items():
+            num_CFMs.append(n)
+            sizes_means.append(np.mean(sizes))
+            sizes_std_errs.append(np.std(sizes) / np.sqrt(len(sizes)))
+
+        fig, ax = plt.subplots()
+        ax.errorbar(num_CFMs, sizes_means, sizes_std_errs)
+        ax.set_xlabel("number of CFMs")
+        ax.set_ylabel("mean CFM size (in px)")
+
+        if isinstance(path_to_save, str) and len(path_to_save) > 0:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
+
+
+    def plot_coherence_vs_CFM_size(self, path_to_save: str = "", **kwargs):
+        """
+        Plot a scatterplot of coherence values against CFM sizes colored with the number of CFMs used. 
+        """
+
+        from itertools import chain
+
+        data = kwargs["data"]
+        assert isinstance(data, np.ndarray)     # TODO common proximity data checking function, or FOF loader everywhere
+        num_top_px = kwargs.get("num_top_px", -1)
+        gamma = kwargs.get("gamma", 1.0)
+        ignore_nans = kwargs.get("ignore_nans", True)
+
+        min_pseudocount = kwargs.get("min_pseudocount", 0.5)
+
+        coherence_by_n = self.compute_coherence_vs_num_CFMs(data=data,
+                                                            gamma=gamma,
+                                                            num_top_px=num_top_px,
+                                                            ignore_nans=ignore_nans)
+        sizes_by_n = self.compute_CFM_size_vs_num_CFMs(min_pseudoucount=min_pseudocount)
+
+        num_CFMs_unique = np.unique(self.num_CFMs_by_model)
+
+        num_CFMs_merged = []
+        coherences_merged = []
+        sizes_merged = []
+        for n in num_CFMs_unique:
+            coherences_merged.extend(coherence_by_n[n])
+            sizes_merged.extend(sizes_by_n[n])
+            num_CFMs_merged.extend([n] * len(sizes_by_n))
+        assert len(coherences_merged) == len(sizes_merged) == len(num_CFMs_merged)
+
+        fig, ax = plt.subplots()
+        ax.scatter(sizes_merged, coherences_merged, c=num_CFMs_merged, s=6, cmap="Set2")
+        ax.set_xlabel("CFM size (in px)")
+        ax.set_ylabel("NPMI coherence")
+        fig.colorbar(shrink=0.75, label="number of CFMs")
+
+        if isinstance(path_to_save, str) and len(path_to_save) > 0:
+            fig.savefig(path_to_save, bbox_inches="tight")
+            plt.close(fig)
+        return fig
+
+
+# TODO integrate these computations into Topic3DModelPool
 # num_CFMs = np.unique(model_pool.num_CFMs_by_model)
 # reps_by_k = {n:[] for n in num_CFMs}
 # for md in model_pool.models:
