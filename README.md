@@ -3,23 +3,13 @@
 **Python package for the decomposition and analysis of chromatin tracing data using topic modeling**
 
 > [!NOTE]
-> This project is under active development. The API is not yet stable and may change frequently.
+> This project is under active development. The API is not yet stable and will change frequently.
 
 ---
 
 ## Overview
 
-`topic3d` enables the processing, analysis, and interpretation of 3D chromatin tracing data using **Latent Dirichlet Allocation (LDA)**. It is designed for experimentalists and computational biologists working with *in situ* hybridization, polymer simulations, or other sources of 3D spatial data.
-
-The package allows you to:
-
-- Load and preprocess raw spatial traces from `.npy` or `.csv` (Fish Omics Format, FOF)
-- Compute pairwise distance vectors and detection efficiency
-- Apply **LDA decomposition** to identify latent structural "topics"
-- Analyze components for coherence, representativity, and divergence
-- Impute missing coordinates, normalize data, and visualize pairwise/proximity matrices
-- Embed and cluster samples using UMAP / PCA / t-SNE + HDBSCAN
-- Easily export figures and results for downstream interpretation
+`topic3d` enables the analysis and interpretation of 3D chromatin tracing data using Latent Dirichlet Allocation (LDA), which captures recurrent Chromatin Folding Motifs (CFMs) based on pairwise proximity maps.
 
 ---
 
@@ -40,91 +30,16 @@ Dependencies include:
 
 ## Usage
 
-### Load and process raw 3D trace data
-
-```python
-import topic3d.handlers as t3h
-
-# Load Fish Omics Format (FOF) data
-raw_data = t3h.RawData()
-raw_data.load("data/messina2024_fof_core.csv")
-processed = raw_data.process()
-
-# Access processed attributes
-print(processed.traces.shape)
-print(processed.pwds.shape)
-```
-
-### Analyze a trained LDA model
-
-```python
-from topic3d.handlers import DecompositionResult
-import joblib
-
-# Load previously trained model and results
-model = joblib.load("results/model_lda.jl")
-decomp = np.load("results/decomposition.npy")
-
-res = DecompositionResult(model, decomp)
-res.plot_components(normalized=True, path_to_save="figs/components.svg")
-res.plot_decomposition(path_to_save="figs/decomposition.svg")
-```
-
-### Visualize 3D structure and proximity
-
-```python
-# Impute missing coordinates (naive neighbor interpolation)
-imputed = processed.traces.impute(method="naive")
-
-# Plot barcode detection efficiency
-fig = imputed.plot_barcode_efficiency(path_to_save="figs/efficiency.png")
-```
-
-### Component analysis and embedding
-
-```python
-# Sort components by representativity
-sorted_idx, freqs = res.sort_components(return_freqs=True)
-
-# Embed and cluster with UMAP + HDBSCAN
-embedding_df = res.embed_decomposition(
-    dir_to_save="results/",
-    method="UMAP",
-    cluster=True,
-    num_neighbors=15,
-    min_dist=0.1,
-)
-```
-
----
-
-## Project Structure
+To run the full pipeline (train an LDA model and decompose data) on a compatible Fish Omics Format for Chromatin Tracing (FOF-CT) dataset:
 
 ```
-┣ 📂data
-┣ 📂examples
-┣ 📂src
-┃ ┣ 📂routines
-┃ ┃ ┣ 📜cli.py
-┃ ┃ ┣ 📜run_dask.py
-┃ ┃ ┗ 📜run.py
-┃ ┣ 📂topic3d
-┃ ┃ ┣ 📂workflow
-┃ ┃ ┃ ┣ 📜_dataops.py
-┃ ┃ ┃ ┣ 📜_logging.py
-┃ ┃ ┃ ┣ 📜_parsers.py
-┃ ┃ ┃ ┗ 📜training.py
-┃ ┃ ┣ 📜__init__.py
-┃ ┃ ┣ 📜_helper.py
-┃ ┃ ┣ 📜datamgrs.py
-┃ ┃ ┣ 📜datatypes.py
-┃ ┃ ┣ 📜handlers.py
-┃ ┃ ┣ 📜postprocessing.py
-┃ ┃ ┗ 📜visualization.py
-┣ 📂tests
-┣ 📜.gitignore
-┣ 📜pyproject.toml
-┗ 📜README.md
+topic3d runall \
+    --data_train_file path/to/data/file.npy \
+    --results_dir path/to/results/folder \
+    --proximity_threshold 150 \     # in nm
+    --num_CFMs 15 \
+    --max_iter 100 \
+    --evaluate_learning
 ```
 
 ---
@@ -136,5 +51,3 @@ embedding_df = res.embed_decomposition(
 - Marcelo Nollmann ([marcnol](https://github.com/marcnol))
 
 ---
-
-## License
