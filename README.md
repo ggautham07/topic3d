@@ -10,6 +10,7 @@
 ## Overview
 
 `topic3d` enables the analysis and interpretation of 3D chromatin tracing data using Latent Dirichlet Allocation (LDA), which captures recurrent Chromatin Folding Motifs (CFMs) based on pairwise proximity maps.
+
 ---
 
 ## Installation
@@ -29,7 +30,17 @@ Dependencies include:
 
 ## Usage
 
-coming soon...
+To run the full pipeline (train an LDA model and decompose data) on a compatible Fish Omics Format for Chromatin Tracing (FOF-CT) dataset:
+
+```
+topic3d runall \
+    --data_train_file path/to/data/file.npy \
+    --results_dir path/to/results/folder \
+    --proximity_threshold 150 \     # in nm
+    --num_CFMs 15 \
+    --max_iter 100 \
+    --evaluate_learning
+```
 
 ---
 
