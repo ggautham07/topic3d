@@ -374,7 +374,11 @@ class Topic3DResult:
                                 ignore_nans: bool = True,
                                 return_cosine: bool = False):
 
-        assert isinstance(npmi_mat, np.ndarray) and issymmetric(npmi_mat)
+        assert isinstance(npmi_mat, np.ndarray)
+        npmi_mat_nonan = npmi_mat.copy()
+        npmi_mat_nonan[np.isnan(npmi_mat_nonan)] = 0
+        assert issymmetric(npmi_mat_nonan)
+        del npmi_mat_nonan
 
         # Take only pixels with an unnormalized pseudocount value >> 0
         valid = np.nonzero(CFM >= 1)[0]
